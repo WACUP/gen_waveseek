@@ -10,6 +10,13 @@ extern api_service *serviceManager;
 
 #include <api/service/waServiceFactory.h>
 
-#include "../../sdk/Agave/Language/api_language.h"
+#include <Agave/Language/api_language.h>
+
+#include <Agave/DecodeFile/api_decodefile2.h>
+extern api_decodefile2 *decodeFile2;
+#define WASABI_API_DECODEFILE2 decodeFile2
+
+#include <loader/hook/api_skin.h>
+#define WASABI_API_SKIN skinApi
 
 #endif

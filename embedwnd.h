@@ -1,8 +1,8 @@
 #ifndef __EMBEDWND_H
 #define __EMBEDWND_H
 
-#include "../winamp/gen.h"
-#include "../winamp/wa_ipc.h"
+#include <winamp/gen.h>
+#include <winamp/wa_ipc.h>
 #include "api.h"
 
 #ifndef WINAMP_NEXT_WINDOW
@@ -20,7 +20,7 @@
 
 // these functions deal with creating the embedded window and relevant menus, etc
 HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID embedWindowGUID);
-void AddEmbeddedWindowToMenus(BOOL add, UINT menuId, LPWSTR menuString, BOOL visible);
+void AddEmbeddedWindowToMenus(BOOL add, UINT menuId, LPWSTR menuString, BOOL setVisible);
 void UpdateEmbeddedWindowsMenu(UINT menuId);
 void DestroyEmbeddedWindow(embedWindowState* embedWindow);
 BOOL SetEmbeddedWindowMinimizedMode(HWND embeddedWindow, BOOL fMinimized);

@@ -1,8 +1,19 @@
+#define WACUP_BUILD
+//#define USE_GDIPLUS
 #include <windows.h>
 #include <windowsx.h>
 #include <shlwapi.h>
+#ifdef USE_GDIPLUS
+#include <gdiplus.h>
+#pragma comment(lib, "gdiplus.lib")
+#endif
+#include <string>
+#include <map>
+#define _USE_MATH_DEFINES
+#include <math.h>
 #include <winamp/in2.H>
 #include <winamp/gen.h>
+#include <winamp/wa_cup.h>
 #include <winamp/wa_ipc.h>
 #include <winamp/ipc_pe.h>
 #include <gen_ml/ml.h>
@@ -16,18 +27,20 @@
 #include "gen_waveseek.h"
 #include "embedwnd.h"
 #ifdef WACUP_BUILD
-#include "../../loader/hook/get_api_service.h"
-#include "../../loader/loader/paths.h"
+#include <loader/loader/paths.h>
+#include <loader/loader/utils.h>
+#include <openssl/sha.h>
 #endif
 
-#define PLUGIN_VERSION "2.3.1"
+#define PLUGIN_VERSION "3.5.4"
 
 #ifdef GetPrivateProfileInt
 #undef GetPrivateProfileInt
 #define GetPrivateProfileInt(field,param) GetPrivateProfileIntW(INI_FILE_SECTION,field,param,ini_file)
 #endif
 
-#define WA_DLG_IMPLEMENT
+//#define WA_DLG_IMPLEMENT
+#define WA_DLG_IMPORTS
 #include <winamp/wa_dlg.h>
 #include <strsafe.h>
 
@@ -40,20 +53,32 @@
 #endif
 
 // this is used to identify the skinned frame to allow for embedding/control by modern skins if needed
+#ifdef WACUP_BUILD
+// {E124F4D6-AA3E-4f3d-A813-C2A8CD6501E5}
+static const GUID embed_guid = 
+{ 0xe124f4d6, 0xaa3e, 0x4f3d, { 0xa8, 0x13, 0xc2, 0xa8, 0xcd, 0x65, 0x1, 0xe5 } };
+#else
 // {1C2F2C09-4F43-4CFF-9DE7-32E014638DFC}
 static const GUID embed_guid = 
 { 0x1c2f2c09, 0x4f43, 0x4cff, { 0x9d, 0xe7, 0x32, 0xe0, 0x14, 0x63, 0x8d, 0xfc } };
+#endif
 
 HWND hWndWaveseek = NULL, hWndToolTip = NULL, hWndInner = NULL;
 WNDPROC oldPlaylistWndProc = NULL;
 embedWindowState embed = {0};
 TOOLINFO ti = {0};
-int on_click = 0, clickTrack = 1, showCuePoints = 0, hideTooltip = 0;
+int on_click = 0, clickTrack = 1,
+	showCuePoints = 0, legacy = 0,
+	audioOnly = 1, hideTooltip = 0,
+	kill_threads = 0, debug = 0,
+	lowerpriority = 0;
 UINT WINAMP_WAVEFORM_SEEK_MENUID = 0xa1bb;
 
 api_service* WASABI_API_SVC = NULL;
+api_decodefile2 *WASABI_API_DECODEFILE2 = NULL;
 api_application *WASABI_API_APP = NULL;
 api_language *WASABI_API_LNG = NULL;
+api_skin *WASABI_API_SKIN = NULL;
 // these two must be declared as they're used by the language api's
 // when the system is comparing/loading the different resources
 HINSTANCE WASABI_API_LNG_HINST = NULL, WASABI_API_ORIG_HINST = NULL;
@@ -69,12 +94,12 @@ int DummyVSAAdd(void *data, int timestamp) { return 0; }
 void DummyVSASetInfo(int srate, int nch) {}
 void DummySetInfo(int bitrate, int srate, int stereo, int synched) {}
 
-WNDPROC lpWndProcOld = NULL, lpWndProc = NULL;
+void FinishProcessingFile(LPCWSTR szCacheFile, unsigned short *pBuffer);
 
 typedef In_Module *(*PluginGetter)();
 
 #define TIMER_ID 31337
-#define TIMER_FREQ 100
+#define TIMER_FREQ 125	// ~8fps
 
 wchar_t *szDLLPath = 0, *ini_file = 0,
 		szFilename[MAX_PATH] = {0},
@@ -84,23 +109,25 @@ wchar_t *szDLLPath = 0, *ini_file = 0,
 		szUnavailable[128] = {0},
 		szBadPlugin[128] = {0},
 		szStreamsNotSupported[128] = {0},
+		szLegacy[128] = {0},
 		pluginTitleW[256] = {0};
 
 In_Module * pModule = NULL;
 int nLengthInMS = 0, no_uninstall = 1, delay_load = -1;
-bool bIsCurrent = false, bIsLoaded = false, bIsProcessing = false;
+bool bIsCurrent = false, bIsProcessing = false, bIsLoaded = false;
 int bUnsupported = 0;
-
 DWORD delay_ipc = (DWORD)-1;
 
-HFONT hFont = NULL;
-HBRUSH hbrBackground = NULL;
+std::map<std::wstring, HANDLE> processing_list;
+
+HBRUSH clrBackgroundBrush = NULL;
 
 COLORREF clrWaveform = RGB(0, 255, 0),
 		 clrBackground = RGB(0, 0, 0),
 		 clrCuePoint = RGB(117, 116, 139),
 		 clrWaveformPlayed = RGB(0, 128, 0),
-		 clrGeneratingText = RGB(0, 128, 0);
+		 clrGeneratingText = RGB(0, 128, 0),
+		 clrWaveformFailed = RGB(0, 96, 0);
 
 void PluginConfig();
 
@@ -110,11 +137,11 @@ void GetFilePaths()
 	{
 		// find the winamp.ini for the Winamp install being used
 #ifdef WACUP_BUILD
-		ini_file = (wchar_t *)get_paths()->winamp_ini_file;
-		lstrcpyn(szWaveCacheDir, get_paths()->settings_dir, ARRAYSIZE(szWaveCacheDir));
+		ini_file = (wchar_t *)GetPaths()->winamp_ini_file;
+		wcsncpy(szWaveCacheDir, GetPaths()->settings_dir, ARRAYSIZE(szWaveCacheDir));
 #else
 		ini_file = (wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETINIFILEW);
-		lstrcpyn(szWaveCacheDir, (wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETINIDIRECTORYW), ARRAYSIZE(szWaveCacheDir));
+		wcsncpy(szWaveCacheDir, (wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETINIDIRECTORYW), ARRAYSIZE(szWaveCacheDir));
 #endif
 
 		// make the cache folder in the user's settings folder e.g. %APPDATA%\Winamp\Plugins\wavecache
@@ -135,7 +162,7 @@ int GetFileInfo(const bool unicode, char* szFn, char szFile[MAX_PATH])
 	int lengthInMS = -1;
 	if (!unicode)
 	{
-		lstrcpynA(szFile, AutoCharFn(szFilename), MAX_PATH);
+		strncpy(szFile, AutoCharFn(szFilename), MAX_PATH);
 	}
 
 	pModule->GetFileInfo((unicode ? (char*)szFn : szFile), (char*)szTitle, &lengthInMS);
@@ -185,26 +212,267 @@ void MPG123HotPatch(HINSTANCE module)
 	}
 }
 
-void StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
+unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer,
+							  unsigned int nSample, unsigned int nFramePerWindow,
+							  unsigned int nNumChannels, unsigned long nAmplitude,
+							  unsigned long *nSampleCount, unsigned int *nBufferPointer)
+{
+	if (!kill_threads)
+	{
+		nAmplitude = max(nAmplitude, nSample);
+		++*nSampleCount;
+
+		if (((*nSampleCount / nNumChannels) == nFramePerWindow) && (*nBufferPointer < SAMPLE_BUFFER_SIZE))
+		{
+			pBuffer[(*nBufferPointer)++] = nAmplitude;
+			*nSampleCount = 0;
+			nAmplitude = 0;
+
+			if (StrStrI(szFilename, szFn))
+			{
+				// since the playlist selection can have
+				// changed, it's simpler to just re-copy
+				// the whole buffer (small penalty) than
+				// trying to just update it on per-byte.
+				memcpy(&pSampleBuffer, pBuffer, SAMPLE_BUFFER_SIZE * sizeof(unsigned short));
+			}
+		}
+	}
+
+	return nAmplitude;
+}
+
+void ClearProcessingHandles()
+{
+	std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
+	while (itr != processing_list.end())
+	{
+		HANDLE handle = (*itr).second;
+		if (handle != NULL)
+		{
+			WaitForSingleObject(handle, INFINITE);
+			CloseHandle(handle);
+		}
+		itr = processing_list.erase(itr);
+	}
+
+	// make sure we're good
+	processing_list.clear();
+}
+
+AudioParameters parameters;
+DWORD WINAPI CalcWaveformThread(LPVOID lp)
+{
+//#define USE_PROFILING
+#ifdef USE_PROFILING
+	LARGE_INTEGER wave_freq = {0}, starttime = {0}, endtime = {0};
+	QueryPerformanceFrequency(&wave_freq);
+	QueryPerformanceCounter(&starttime);
+#endif
+
+	wchar_t szFn[MAX_PATH] = {0};
+	wcsncpy(szFn, szFilename, MAX_PATH);
+
+	ifc_audiostream *decoder = (ifc_audiostream *)lp;
+	if (decoder)
+	{
+		wchar_t szThreadWaveCacheFile[MAX_PATH] = {0};
+		unsigned long nAmplitude = 0, nSampleCount = 0;
+		unsigned int nFramePerWindow = 0, nBufferPointer = 0;
+		unsigned short pThreadSampleBuffer[SAMPLE_BUFFER_SIZE] = {0};
+
+		SecureZeroMemory(pSampleBuffer, SAMPLE_BUFFER_SIZE * sizeof(unsigned short));
+		wcsncpy(szThreadWaveCacheFile, szWaveCacheFile, ARRAYSIZE(szThreadWaveCacheFile));
+
+		// TODO consider changing over to the metadata api
+		LPCWSTR length_str = GetExtendedFileInfoW(szFn, L"length");
+		if (length_str && *length_str)
+		{
+			const int lengthMS = _wtoi(length_str);
+			if (lengthMS > 0)
+			{
+				nFramePerWindow = MulDiv(lengthMS, parameters.sampleRate, SAMPLE_BUFFER_SIZE * 1000) + 1;
+			}
+		}
+		else
+		{
+			if (decodeFile2)
+			{
+				decodeFile2->CloseAudio(decoder);
+			}
+
+			goto abort;
+		}
+
+		const int padded_bits = ((parameters.bitsPerSample + 7) & (~7)) / 8;
+		const size_t buffer_size = (1152 * parameters.channels * padded_bits);
+		char *data = (char *)calloc(buffer_size, sizeof(char));
+		if (!data)
+		{
+			goto abort;
+		}
+
+		while (!kill_threads)
+		{
+			int error = 0;
+			const size_t bytesRead = decoder->ReadAudio((void *)data, buffer_size, &kill_threads, &error);
+			if (error || kill_threads)
+			{
+				break;
+			}
+
+			const size_t samples = (bytesRead ? (bytesRead / padded_bits) : 0);
+			if (!samples || kill_threads)
+			{
+				break;
+			}
+
+			if ((nFramePerWindow == 0) || kill_threads)
+			{
+				break;
+			}
+
+			if (parameters.bitsPerSample == 16)
+			{
+				const short *p = (short *)data;
+				for (int i = 0; i < (bytesRead / 2) && !kill_threads; i++)
+				{
+					const unsigned int nSample = abs(*(p++));
+					nAmplitude = AddThreadSample(szFn, &pThreadSampleBuffer[0], nSample,
+												 nFramePerWindow, parameters.channels,
+												 nAmplitude, &nSampleCount, &nBufferPointer);
+				}
+			}
+			else if (parameters.bitsPerSample == 24)
+			{
+				const char *p = (char *)data;
+				for (int i = 0; i < (bytesRead / 3) && !kill_threads; i++)
+				{
+					const unsigned int nSample = abs((((0xFF & *(p + 2)) << 24) |
+													 ((0xFF & *(p + 1)) << 16) |
+													 ((0xFF & *(p)) << 8)) >> 16);
+					p += 3;
+					nAmplitude = AddThreadSample(szFn, &pThreadSampleBuffer[0], nSample,
+												 nFramePerWindow, parameters.channels,
+												 nAmplitude, &nSampleCount, &nBufferPointer);
+				}
+			}
+			else
+			{
+				// if we don't support it then we need to flag it
+				// so that a message is provided to the user else
+				// it can cause confusion due to looking broken.
+				bUnsupported = 1;
+			}
+		}
+
+		free(data);
+
+		if (decodeFile2)
+		{
+			decodeFile2->CloseAudio(decoder);
+		}
+
+		if (!kill_threads)
+		{
+			FinishProcessingFile(szThreadWaveCacheFile, &pThreadSampleBuffer[0]);
+
+			// when we have finished, if we are still the
+			// current playlist item (playing / selected)
+			// then we will just copy over the buffer so
+			// that we don't need to do more processing.
+			if (StrStrI(szFilename, szFn))
+			{
+				memcpy(&pSampleBuffer, &pThreadSampleBuffer, SAMPLE_BUFFER_SIZE * sizeof(unsigned short));
+			}
+		}
+	}
+
+abort:
+	if (!kill_threads)
+	{
+		std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
+		while (itr != processing_list.end())
+		{
+			// found it so no need to re-add
+			// as that's just going to cause
+			// more processing / duplication
+			if (StrStrI(szFn, (*itr).first.c_str()))
+			{
+				CloseHandle((*itr).second);
+				processing_list.erase(itr);
+				break;
+			}
+			++itr;
+		}
+
+		if (!processing_list.size())
+		{
+			bIsProcessing = false;
+		}
+	}
+
+#ifdef USE_PROFILING
+	QueryPerformanceCounter(&endtime);
+	const float ms = ((endtime.QuadPart - starttime.QuadPart) * 1000.0f / wave_freq.QuadPart);
+	if (ms > /*0/*/0.10f/**/)
+	{
+		wchar_t profile[128] = {0};
+		StringCchPrintf(profile, ARRAYSIZE(profile), L"%.3fms", ms);
+		MessageBox(plugin.hwndParent, profile, 0, 0);
+	}
+#endif
+
+	return 0;
+}
+
+HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 {
 	HMODULE hDLL = NULL;
 	pModule = NULL;
 
+	// first we try to use the decoder api which saves having to do any
+	// of the plug-in copying which is better and works with most of the
+	// popular formats (as long as the input plug-in has support for it)
+	if (decodeFile2 && decodeFile2->DecoderExists(szFn))
+	{
+		parameters.flags = AUDIOPARAMETERS_MAXCHANNELS | AUDIOPARAMETERS_MAXSAMPLERATE | AUDIOPARAMETERS_NO_RESAMPLE;
+		parameters.channels = 2;
+		parameters.bitsPerSample = 24;
+		parameters.sampleRate = 44100;
+
+		wchar_t fn[MAX_PATH] = {0};
+		wcsncpy(fn, szFn, ARRAYSIZE(fn));
+		ifc_audiostream *decoder = (decodeFile2 ? decodeFile2->OpenAudioBackground(fn, &parameters) : NULL);
+		if (decoder)
+		{
+			DWORD dwThreadId = 0;
+			HANDLE CalcThread = CreateThread(0, 0, (LPTHREAD_START_ROUTINE)CalcWaveformThread,
+											 (LPVOID)decoder, CREATE_SUSPENDED, &dwThreadId);
+			if (CalcThread)
+			{
+				SetThreadPriority(CalcThread, (!lowerpriority ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_LOWEST));
+				ResumeThread(CalcThread);
+				bIsProcessing = true;
+				return CalcThread;
+			}
+			else
+			{
+				if (decodeFile2)
+				{
+					decodeFile2->CloseAudio(decoder);
+				}
+			}
+		}
+	}
+
+	if (legacy)
+	{
 	// we use Winamp's own checking to more reliably ensure that we'll
 	// get which plug-in is actually responsible for the file handling
 	In_Module *in_mod = (In_Module*)SendMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)szFn, IPC_CANPLAY);
 	if (in_mod && (in_mod != (In_Module*)1))
 	{
-		// try to not do the duplicated plug-in method if
-		// there is nothing playing at the current time
-		// TODO need to be smarter to check if it's the
-		//		same as the plug-in which has been found
-		/*if (!start_playing && !SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_ISPLAYING))
-		{
-			pModule = in_mod;
-		}
-		else*/
-		{
 			wchar_t szSource[MAX_PATH] = {0};
 			GetModuleFileName(in_mod->hDllInstance, szSource, ARRAYSIZE(szSource));
 
@@ -212,22 +480,66 @@ void StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 			// which we'll then be calling for the processing
 			wchar_t *filename = PathFindFileName(szSource);
 
-			if (StrStrI(filename, L"in_midi.dll") ||
+			if (StrStrI(filename, L"in_cdda.dll") ||
+				StrStrI(filename, L"in_flac.dll") ||
+				StrStrI(filename, L"in_midi.dll") ||
+				StrStrI(filename, L"in_mod.dll") ||
+				StrStrI(filename, L"in_mp3.dll") ||
+				StrStrI(filename, L"in_mp4.dll") ||
+				StrStrI(filename, L"in_vgmstream.dll") ||
+				StrStrI(filename, L"in_wave.dll") ||
 				StrStrI(filename, L"in_wm.dll"))
 			{
-				// these native nullsoft plug-in really
+				// these native / nullsoft plug-ins really
 				// really really doesn't like to work as a
 				// multi-instance plug-in so best to just
 				// not attempt to use it for processing :(
 				//
 				// somehow leveraging the transcoding api
 				// might be enough to re-enable in_wm.dll
+				//
+				// the in_mp4 check is there since nullsoft
+				// or wacup provided versions also don't
+				// play well when copied & the only reason
+				// for trying to use in_mp4 here is if its
+				// from a video only mp4 file (as happens)
 				bUnsupported = 2;
-				return;
+				return NULL;
+			}
+
+			if (StrStrI(filename, L"in_bpxfade.dll"))
+			{
+				// unfortunately this plug-in seems to have issues due to
+				// it not fully supporting the Winamp 5.66+ API with the
+				// api_service member of the input plug-in structure so
+				// it's best to block it being used to prevent crashing.
+				// it acts as a middle-ware between Winamp and plug-ins
+				// which without that api_service member being populated
+				// and a few other assumptions it makes for trouble :(
+				bUnsupported = 2;
+				return NULL;
+			}
+
+			if (StrStrI(filename, L"in_bpopus.dll"))
+			{
+				// this (another thinktink plug-in like in_bpxfade.dll)
+				// doesn't like being duplicated which will cause a crash
+				bUnsupported = 2;
+				return NULL;
+			}
+
+			if (StrStrI(filename, L"in_zip.dll"))
+			{
+				// this is to avoid issues if the WACUP version of the
+				// plug-in contains files that require the legacy mode
+				// as it otherwise tries to work with ifc_audiostream
+				bUnsupported = 2;
+				return NULL;
 			}
 
 			PathCombine(szTempDLLDestination, szWaveCacheDir, L"waveseek_");
 			PathAddExtension(szTempDLLDestination, filename);
+
 			// if not there then copy it
 			if (!PathFileExists(szTempDLLDestination))
 			{
@@ -267,7 +579,11 @@ void StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 				}
 				if (!hDLL)
 				{
-					return;
+					hDLL = LoadLibraryEx(szTempDLLDestination, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR);
+				}
+				if (!hDLL)
+				{
+					return NULL;
 				}
 
 				if (StrStrI(filename, L"mpg123"))
@@ -281,14 +597,20 @@ void StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 					MPG123HotPatch(hDLL);
 				}
 
+				__try
+				{
 				PluginGetter pluginGetter = (PluginGetter)GetProcAddress(hDLL, "winampGetInModule2");
 				if (!pluginGetter)
 				{
-					return;
+						return NULL;
 				}
 
 				pModule = pluginGetter();
 			}
+				__except(EXCEPTION_EXECUTE_HANDLER)
+				{
+					return NULL;
+				}
 		}
 	}
 
@@ -327,13 +649,13 @@ void StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 				nLengthInMS = GetFileInfo(unicode, (char*)szFn, szFile);
 				if (nLengthInMS <= 0)
 				{
-					return;
+						return NULL;
 				}
 
 				pModule->outMod = CreateOutput(hWndWaveseek, hDLL);
 				if (pModule->Play((unicode ? (char*)szFn : szFile)) != 0)
 				{
-					return;
+						return NULL;
 				}
 
 				bIsProcessing = true;
@@ -341,29 +663,53 @@ void StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 		}
 	}
 }
+	else
+	{
+		// give the user a hint if all else fails
+		bUnsupported = 3;
+	}
+
+	return NULL;
+}
 
 void ProcessStop()
 {
 	if (pModule)
 	{
-		if (bIsProcessing)
+		if (bIsProcessing && pModule->Stop)
+		{
+			__try
 		{
 			pModule->Stop();
 		}
+			__except(EXCEPTION_EXECUTE_HANDLER)
+			{
+			}
+		}
+
+		if (pModule->Quit)
+		{
+			__try
+			{
 		pModule->Quit();
-		//FreeLibrary(pModule->hDllInstance);
+			}
+			__except(EXCEPTION_EXECUTE_HANDLER)
+			{
+			}
+		}
+
 		pModule = NULL;
 	}
 	bIsProcessing = false;
 }
 
-void FinishProcessingFile()
+void FinishProcessingFile(LPCWSTR szCacheFile, unsigned short *pBuffer)
 {
-	HANDLE h = CreateFile(szWaveCacheFile, GENERIC_WRITE, NULL, NULL, CREATE_ALWAYS, NULL, NULL);
+	HANDLE h = CreateFile(szCacheFile, GENERIC_WRITE, NULL, NULL, CREATE_ALWAYS, NULL, NULL);
 	if (h != INVALID_HANDLE_VALUE)
 	{
 		DWORD dw = 0;
-		WriteFile(h, pSampleBuffer, SAMPLE_BUFFER_SIZE * sizeof(unsigned short), &dw, NULL);
+		WriteFile(h, (pBuffer ? pBuffer : pSampleBuffer), SAMPLE_BUFFER_SIZE * sizeof(unsigned short), &dw, NULL);
 		CloseHandle(h);
 
 		if (dw > 0)
@@ -406,7 +752,7 @@ void LoadCUE(wchar_t * szFn)
 
 		if (wcsstr(str, L"TRACK") == str)
 		{
-			swscanf(str, L"TRACK %d AUDIO", &nCurrentTrack);
+			(void)swscanf(str, L"TRACK %d AUDIO", &nCurrentTrack);
 			nCurrentTrack = min(nCurrentTrack, 255);
 			nCueTracks = max(nCueTracks, nCurrentTrack);
 			pCueTracks[nCurrentTrack - 1].szPerformer[0] = 0;
@@ -418,19 +764,19 @@ void LoadCUE(wchar_t * szFn)
 			CUETRACK & track = pCueTracks[ nCurrentTrack - 1];
 			if (wcsstr(str, L"PERFORMER") == str)
 			{
-				swscanf(str, L"PERFORMER \"%[^\"]\"", track.szPerformer);
+				(void)swscanf(str, L"PERFORMER \"%[^\"]\"", track.szPerformer);
 			}
 
 			if (wcsstr(str, L"TITLE") == str)
 			{
-				swscanf(str, L"TITLE \"%[^\"]\"", track.szTitle);
+				(void)swscanf(str, L"TITLE \"%[^\"]\"", track.szTitle);
 			}
 
 			if (wcsstr(str, L"INDEX") == str)
 			{
-				int m = 0, s = 0, f = 0;
-				swscanf(str, L"INDEX %*d %d:%d:%d", &m, &s, &f);
-				track.nMillisec = m * 60 * 1000 + s * 1000 + (f * 1000) / 75;
+				int m = 0, s = 0, _f = 0;
+				(void)swscanf(str, L"INDEX %*d %d:%d:%d", &m, &s, &_f);
+				track.nMillisec = m * 60 * 1000 + s * 1000 + (_f * 1000) / 75;
 			}
 		}
 	}
@@ -468,25 +814,27 @@ LPWSTR GetTooltipText(HWND hWnd, int pos, int lengthInMS)
 		}
 	}
 
+	wchar_t position[32] = {0}, total[32] = {0};
+	FormatTimeString(position, ARRAYSIZE(position), sec);
+	FormatTimeString(total, ARRAYSIZE(total), total_sec);
+
 	if (nTrack >= 0)
 	{
 		if (pCueTracks[nTrack].szPerformer[0])
 		{
-			StringCchPrintf(coords, ARRAYSIZE(coords), L"%s - %s [%d:%02d / %d:%02d]",
-							pCueTracks[nTrack].szPerformer, pCueTracks[nTrack].szTitle,
-							sec / 60, sec % 60, total_sec / 60, total_sec % 60);
+			StringCchPrintf(coords, ARRAYSIZE(coords), L"%s - %s [%s / %s]",
+							pCueTracks[nTrack].szPerformer,
+							pCueTracks[nTrack].szTitle, position, total);
 		}
 		else
 		{
-			StringCchPrintf(coords, ARRAYSIZE(coords), L"%s [%d:%02d / %d:%02d]",
-							pCueTracks[nTrack].szTitle,
-							sec / 60, sec % 60, total_sec / 60, total_sec % 60);
+			StringCchPrintf(coords, ARRAYSIZE(coords), L"%s [%s / %s]",
+							pCueTracks[nTrack].szTitle, position, total);
 		}
 	}
 	else
 	{
-		StringCchPrintf(coords, ARRAYSIZE(coords), L"%d:%02d / %d:%02d",
-						sec / 60, sec % 60, total_sec / 60, total_sec % 60);
+		StringCchPrintf(coords, ARRAYSIZE(coords), L"%s / %s", position, total);
 	}
 
 	return coords;
@@ -506,6 +854,38 @@ int GetFileLength()
 	return -1000;
 }
 
+const int get_cpu_procs()
+{
+	SYSTEM_INFO sysinfo = {0};
+	GetSystemInfo(&sysinfo);
+	return sysinfo.dwNumberOfProcessors;
+}
+
+BOOL GetFilenameHash(LPCWSTR filename, LPWSTR cacheFile)
+{
+	// we generate a hash of the path (disk or stream)
+	// and then use that instead of the raw filename
+	// so we can better deal with duplicate filenames
+	// but within different folders (release vs remix)
+	// the main downside is that moving the file will
+	// now cause a re-render to be initiated but it's
+	// not that expensive of a process to do that now
+	unsigned char sha1[SHA_DIGEST_LENGTH] = {0};
+	if (SHA1Curl((unsigned char *)filename, wcslen(filename) * sizeof(wchar_t), sha1))
+	{
+		// convert to a hex string
+		//wchar_t cacheFile[61] = {0};
+		for (int i = 0; i < 20; i++)
+		{
+			_snwprintf(cacheFile + i * 2, 3, L"%02x", sha1[i]);
+		}
+
+		StringCchCat(cacheFile, MAX_PATH, L".cache");
+		return TRUE;
+	}
+	return FALSE;
+}
+
 void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 {
 	if (StrStrI(szFilename, szFn) && bIsProcessing)
@@ -514,22 +894,38 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 		// to re-process (e.g. multiple clicks in the
 		// main playlist editor) then we try to filter
 		// out and keep going if it's the same file.
+		bIsCurrent = !_wcsicmp(szFn, (wchar_t*)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GET_PLAYING_FILENAME));
 		return;
 	}
 
 	ProcessStop();
 
-	bIsProcessing = bIsLoaded = bUnsupported = false;
-	bIsCurrent = !lstrcmpi(szFn, (wchar_t*)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GET_PLAYING_FILENAME));
-	lstrcpyn(szFilename, szFn, MAX_PATH);
+	bIsLoaded = bUnsupported = false;
+	bIsCurrent = !_wcsicmp(szFn, (LPCWSTR)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GET_PLAYING_FILENAME));
+
+	wcsncpy(szFilename, szFn, MAX_PATH);
 
 	nCueTracks = 0;
 
 	// make sure that it's valid and something we can process
-	if (szFilename[0] && !PathIsURL(szFn))
+	if (szFn && *szFn && ((!PathIsURL(szFn) && PathFileExists(szFn)) || !_wcsnicmp(szFn, L"zip://", 6)))
 	{
+		// if enabled then only process audio only files
+		// as pocessing video can cause some problems...
+		if (audioOnly)
+		{
+			LPCWSTR type_str = GetExtendedFileInfoW(szFn, L"type");
+			if (type_str && *type_str)
+	{
+				if (_wtoi(type_str) == 1)
+				{
+					return;
+				}
+			}
+		}
+
 		wchar_t szCue[MAX_PATH] = {0};
-		lstrcpyn(szCue, szFn, MAX_PATH);
+		wcsncpy(szCue, szFn, MAX_PATH);
 		PathRenameExtension(szCue, L".cue");
 
 		if (PathFileExists(szCue))
@@ -537,12 +933,61 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 			LoadCUE(szCue);
 		}
 
+#ifdef WACUP_BUILD
+		// for a smoother upgrade we'll still look
+		// for the original cache file but a newer
+		// file will be made with the better name.
 		PathCombine(szWaveCacheFile, szWaveCacheDir, PathFindFileName(szFn));
 		StringCchCat(szWaveCacheFile, MAX_PATH, L".cache");
 
 		if (!PathFileExists(szWaveCacheFile))
 		{
-			StartProcessingFile(szFn, start_playing);
+			wchar_t cacheFile[61] = {0};
+			if (GetFilenameHash(szFn, cacheFile))
+			{
+				PathCombine(szWaveCacheFile, szWaveCacheDir, cacheFile);
+			}
+		}
+#else
+		// TODO apply the above to a non-WACUP install
+		PathCombine(szWaveCacheFile, szWaveCacheDir, PathFindFileName(szFn));
+		StringCchCat(szWaveCacheFile, MAX_PATH, L".cache");
+#endif
+
+		if (!PathFileExists(szWaveCacheFile))
+		{
+			std::map<std::wstring, HANDLE>::const_iterator itr = processing_list.begin();
+			while (itr != processing_list.end())
+			{
+				// found it so no need to re-add
+				// as that's just going to cause
+				// more processing / duplication
+				if (StrStrI(szFn, (*itr).first.c_str()))
+				{
+					bIsProcessing = true;
+					return;
+				}
+				++itr;
+			}
+
+			// try to limit the number of files
+			// being processed at the same time
+			// to avoid causing some setups to
+			// hang due to quick 'next' actions
+			static int cpu_count = get_cpu_procs();
+			if (processing_list.size() < cpu_count)
+			{
+				HANDLE thread = StartProcessingFile(szFn, start_playing);
+				if (thread != NULL)
+				{
+					processing_list[std::wstring(szFn)] = thread;
+				}
+			}
+			else
+			{
+				bIsProcessing = true;
+				return;
+			}
 		}
 		else
 		{
@@ -551,7 +996,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 			if (h != INVALID_HANDLE_VALUE)
 			{
 				DWORD dw = 0;
-				ReadFile(h, pSampleBuffer, SAMPLE_BUFFER_SIZE * sizeof(unsigned short), &dw, NULL);
+				(void)ReadFile(h, pSampleBuffer, SAMPLE_BUFFER_SIZE * sizeof(unsigned short), &dw, NULL);
 				CloseHandle(h);
 				if (dw > 0)
 				{
@@ -574,27 +1019,61 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 	}
 }
 
-HFONT GetWaveformFont()
+int GetPrivateProfileHex(LPCWSTR lpAppName, LPCWSTR lpKeyName, INT nDefault, LPCWSTR lpFileName)
 {
-	if (!hFont)
+	wchar_t str[16] = {0}, *s = str;
+	if (!GetPrivateProfileStringW(lpAppName, lpKeyName, L"", str, ARRAYSIZE(str), lpFileName) || !*str)
 	{
-		INT height = (INT)SendMessageW(plugin.hwndParent, WM_WA_IPC, 3, IPC_GET_GENSKINBITMAP);
-		DWORD charset = (DWORD)SendMessageW(plugin.hwndParent, WM_WA_IPC, 2, IPC_GET_GENSKINBITMAP);
-		char *fontname = (char*)SendMessageW(plugin.hwndParent, WM_WA_IPC, 1, IPC_GET_GENSKINBITMAP);
-		hFont = CreateFontA(-height, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, charset,
-							OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DRAFT_QUALITY,
-							DEFAULT_PITCH | FF_DONTCARE, fontname);
+		return nDefault;
 	}
-	return hFont;
+
+	if (s && (*s == '#'))
+	{
+		++s;
 }
 
-void ProcessSkinChange()
+	int val = nDefault;
+	if (s && *s)
 {
-	WADlg_init(plugin.hwndParent);
+		val = wcstol(s, &s, 16);
+	}
+
+	const int r = ((val >> 16) & 255),
+			  g = ((val >> 8) & 255),
+			  b = (val & 255);
+	return RGB(r, g, b);
+}
+
+COLORREF GetSkinColour(LPCWSTR element_id, COLORREF default_colour)
+{
+	if (!WASABI_API_SKIN)
+	{
+		ServiceBuild(WASABI_API_SVC, WASABI_API_SKIN, skinApiServiceGuid);
+	}
+
+	if (WASABI_API_SKIN)
+	{
+		LPCWSTR colour_group = NULL;
+		const ARGB32 *colour = WASABI_API_SKIN->skin_getColorElementRef(element_id, &colour_group);
+		if (colour != NULL)
+		{
+			return WASABI_API_SKIN->filterSkinColor(*colour, element_id, colour_group);
+		}
+	}
+	return default_colour;
+}
+
+void ProcessSkinChange(BOOL skip_refresh = FALSE)
+{
+	if (clrBackgroundBrush != NULL)
+	{
+		DeleteBrush(clrBackgroundBrush);
+		clrBackgroundBrush = NULL;
+	}
 
 	clrBackground = WADlg_getColor(WADLG_ITEMBG);
 	clrCuePoint = WADlg_getColor(WADLG_HILITE);
-	clrGeneratingText = (COLORREF)SendMessage(plugin.hwndParent, WM_WA_IPC, 4, IPC_GET_GENSKINBITMAP);
+	clrGeneratingText = WADlg_getPlaylistSelectionTextColor();
 
 	// get the current skin and use that as a
 	// means to control the colouring used
@@ -605,6 +1084,8 @@ void ProcessSkinChange()
 	{
 		// use the skin provided value
 		clrWaveformPlayed = clrGeneratingText;
+		// give us something that should be ok
+		clrWaveformFailed = WADlg_BlendColors(clrBackground, clrWaveformPlayed, (COLORREF)128);
 	}
 	else
 	{
@@ -612,45 +1093,72 @@ void ProcessSkinChange()
 		// colour from the classic base skin
 		// is almost white and looks wrong.
 		clrWaveformPlayed = RGB(0, 178, 0);
+		clrWaveformFailed = RGB(0, 96, 0);
 	}
 
 	clrWaveform = WADlg_getColor(WADLG_ITEMFG);
+
 	// try to ensure that things can be seen in-case of
 	// close colouring by the skin (matches what the ML
 	// tries to do to ensure some form of visibility).
-	if (abs(GetColorDistance(clrWaveformPlayed, clrWaveform)) < 70)
+	if (abs(WADlg_GetColorDistance(clrWaveformPlayed, clrWaveform)) < 70)
 	{ 
-		clrWaveformPlayed = BlendColors(clrBackground, clrWaveform, (COLORREF)77);
+		clrWaveformPlayed = WADlg_BlendColors(clrBackground, clrWaveform, (COLORREF)77);
 	}
 
-	if (hbrBackground)
+	// attempt to now use the skin override options
+	// which are provided in a waveseek.txt within
+	// the root of the skin (folder or archive).
+	if (szBuffer[0])
 	{
-		DeleteBrush(hbrBackground);
+		// look for the file that classic skins could provide
+		PathAppend(szBuffer, L"waveseek.txt");
+		if (PathFileExists(szBuffer))
+		{
+			clrBackground = GetPrivateProfileHex(L"colours", L"background", clrBackground, szBuffer);
+			clrCuePoint = GetPrivateProfileHex(L"colours", L"cue_point", clrCuePoint, szBuffer);
+			clrGeneratingText = GetPrivateProfileHex(L"colours", L"status_text", clrGeneratingText, szBuffer);
+			clrWaveform = GetPrivateProfileHex(L"colours", L"wave_normal", clrWaveform, szBuffer);
+			clrWaveformPlayed = GetPrivateProfileHex(L"colours", L"wave_playing", clrWaveformPlayed, szBuffer);
+			clrWaveformFailed = GetPrivateProfileHex(L"colours", L"wave_failed", clrWaveformFailed, szBuffer);
+		}
+		else
+	{
+			// otherwise look for (if loaded) anything within the
+			// modern skin configuration for it's override colours
+			clrBackground = GetSkinColour(L"plugin.waveseeker.background", clrBackground);
+			clrCuePoint = GetSkinColour(L"plugin.waveseeker.cue_point", clrCuePoint);
+			clrGeneratingText = GetSkinColour(L"plugin.waveseeker.status_text", clrGeneratingText);
+			clrWaveform = GetSkinColour(L"plugin.waveseeker.wave_normal", clrWaveform);
+			clrWaveformPlayed = GetSkinColour(L"plugin.waveseeker.wave_playing", clrWaveformPlayed);
+			clrWaveformFailed = GetSkinColour(L"plugin.waveseeker.wave_failed", clrWaveformFailed);
 	}
-	hbrBackground = CreateSolidBrush(clrBackground);
 
-	if (hFont)
-	{
-		DeleteFont(hFont);
-		hFont = NULL;
+		clrBackgroundBrush = CreateSolidBrush(clrBackground);
 	}
-	GetWaveformFont();
+
+	if (!skip_refresh)
+	{
+		InvalidateRect(hWndWaveseek, NULL, TRUE);
+	}
 }
 
 void PaintWaveform(HDC hdc, RECT rc)
 {
-	int nSongPos = (bIsCurrent ? SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETOUTPUTTIME) : 0),
+	const int nSongPos = (bIsCurrent ? SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETOUTPUTTIME) : 0),
 		nSongLen = (bIsCurrent ? SendMessage(plugin.hwndParent, WM_WA_IPC, 2, IPC_GETOUTPUTTIME) : GetFileLength()),
 		nBufPos = (nSongLen != -1 ? MulDiv(nSongPos, SAMPLE_BUFFER_SIZE, nSongLen) : 0),
-		w = (rc.right - rc.left), h = (rc.bottom - rc.top);
+			  h = (rc.bottom - rc.top);
+	int w = (rc.right - rc.left);
 
 	const HDC hdcMem = CreateCompatibleDC(hdc);
 	const HBITMAP hbmMem = CreateCompatibleBitmap(hdc, w, h),
 				  hbmOld = (HBITMAP)SelectObject(hdcMem, hbmMem);
 
-	SelectObject(hdcMem, GetWaveformFont());
+	SelectObject(hdcMem, WADlg_getFont());
 
-	FillRect(hdcMem, &rc, hbrBackground);
+	HBRUSH background = (clrBackgroundBrush ? clrBackgroundBrush : WADlg_getBrush(WADLG_ITEMBG_BRUSH));
+	FillRect(hdcMem, &rc, background);
 
 	if ((bIsLoaded || bIsProcessing) && !bUnsupported)
 	{
@@ -679,7 +1187,7 @@ void PaintWaveform(HDC hdc, RECT rc)
 			MoveToEx(hdcMem, i, y, NULL);
 			LineTo(hdcMem, i, y + sh);
 
-			if (showCuePoints && nCueTracks > 0)
+			if (showCuePoints && (nCueTracks > 0))
 			{
 				unsigned int ms = MulDiv(i, nSongLen, w);
 				if (ms > 0)
@@ -710,12 +1218,137 @@ void PaintWaveform(HDC hdc, RECT rc)
 	}
 	else
 	{
+		if (debug)
+		{
 		SetBkColor(hdcMem, clrBackground);
 		SetTextColor(hdcMem, clrGeneratingText);
 
-		DrawText(hdcMem, (!PathIsURL(szFilename) ? (bUnsupported == 2 ? szBadPlugin :
-													szUnavailable) : szStreamsNotSupported),
-				 -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+			DrawText(hdcMem, (!PathIsURL(szFilename) && _wcsnicmp(szFilename, L"zip://", 6) ?
+					 (bUnsupported == 2 ? szBadPlugin : (bUnsupported == 3 ? szLegacy : szUnavailable)) :
+					  szStreamsNotSupported), -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+	}
+		else
+		{
+			// make the width a bit less so the right-edge
+			// can allow for the end of the track to be
+			// correctly selected or the tooltip show up
+			--w;
+
+			const int y = h / 2;
+#ifdef USE_GDIPLUS
+			const bool plain = false;
+			if (plain)
+			{
+#endif
+				const HDC hdcMem2 = CreateCompatibleDC(hdc);
+				const HBITMAP hbmMem2 = CreateCompatibleBitmap(hdc, w, h),
+							  hbmOld2 = (HBITMAP)SelectObject(hdcMem2, hbmMem2);
+				FillRect(hdcMem2, &rc, background);
+
+				// draw a sine wave to indicate we're still
+				// there but that we've not got anything to
+				// show either from being missing / invalid
+				for (int k = 0; k < 2; k++)
+				{
+					const HDC thisdc = (!k ? hdcMem : hdcMem2);
+
+					SelectObject(thisdc, GetStockObject(DC_PEN));
+
+					// draw a base line in the middle of the window
+					SetDCPenColor(thisdc, (!nBufPos ? clrWaveformFailed : (!k ? clrWaveform : clrWaveformPlayed)));
+					MoveToEx(thisdc, 0, y, NULL);
+
+					if (!k)
+					{
+						LineTo(thisdc, w, y);
+						MoveToEx(thisdc, 0, y, NULL);
+}
+
+					for (int j = 0; j < ((w / 256) + 1); j++)
+{
+						#define num_point 4096
+						POINT points[num_point];
+						for (int i = 0; i < num_point ; i++)
+	{
+						   points[i].x = (j * 256) + ((i * 256) / num_point);
+						   points[i].y = (int)((h / 2.0f) * (1 - sin((4.0f * M_PI) * i / num_point)));
+	}
+
+						PolylineTo(thisdc, points, num_point);
+
+						// only fill in things when its needed
+						if (k && (nBufPos > 0))
+	{
+							HRGN rgn = CreatePolygonRgn(points, num_point, ALTERNATE/*/WINDING/**/);
+							if (rgn)
+							{
+								HBRUSH br = CreateSolidBrush(clrWaveformPlayed);
+								if (br)
+								{
+									FillRgn(thisdc, rgn, br);
+									DeleteObject(br);
+								}
+								DeleteObject(rgn);
+							}
+						}
+	}
+
+					// ensure the middle line will show in playing mode
+					if (k && (nBufPos > 0))
+	{
+						SetDCPenColor(thisdc, clrWaveform);
+						MoveToEx(thisdc, 0, y, NULL);
+						LineTo(thisdc, w, y);
+					}
+	}
+
+				// only copy in things when its needed
+				if (nBufPos > 0)
+				{
+					BitBlt(hdcMem, 0, 0, MulDiv(nSongPos, w, nSongLen), h, hdcMem2, 0, 0, SRCCOPY);
+}
+
+				SelectObject(hdcMem2, hbmOld2);
+				DeleteObject(hbmMem2);
+				DeleteDC(hdcMem2);
+#ifdef USE_GDIPLUS
+			}
+			else
+{
+				Gdiplus::Graphics graphics(hdcMem);
+				Gdiplus::Pen *pen = new Gdiplus::Pen(Gdiplus::Color(GetRValue(clrWaveformFailed),
+													 GetGValue(clrWaveformFailed),
+													 GetBValue(clrWaveformFailed)));
+				if (pen)
+	{
+					graphics.DrawLine(pen, 0, y, w, y);
+
+					/*graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);/*/
+					graphics.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);/**/
+
+					// draw a sine wave to indicate we're still
+					// there but that we've not got anything to
+					// show either from being missing / invalid
+					for (int j = 0; j < (w / 256) + 1; j++)
+	{
+						#define num_point 4096
+						Gdiplus::PointF points[num_point];
+						for (int i = 0; i < num_point ; i++)
+						{
+						   points[i].X = (j * 256) + ((i * 256) / num_point);
+						   points[i].Y = (int)((h / 2.0f) * (1 - sinf((4.0f * M_PI) * i / num_point)));
+						}
+						graphics.DrawLines(pen, points, num_point);
+					}
+
+					delete pen;
+	}
+			}
+#endif
+
+			// and now restore so that we get drawn correctly
+			++w;
+		}
 	}
 
 	BitBlt(hdc, 0, 0, w, h, hdcMem, 0, 0, SRCCOPY);
@@ -723,49 +1356,6 @@ void PaintWaveform(HDC hdc, RECT rc)
 	SelectObject(hdcMem, hbmOld);
 	DeleteObject(hbmMem);
 	DeleteDC(hdcMem);
-}
-
-LRESULT sendMlIpc(int msg, WPARAM param)
-{
-	static LRESULT IPC_GETMLWINDOW;
-	if (!IPC_GETMLWINDOW)
-	{
-		IPC_GETMLWINDOW = SendMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)&"LibraryGetWnd", IPC_REGISTER_WINAMP_IPCMESSAGE);
-	}
-	HWND mlwnd = (HWND)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETMLWINDOW);
-
-	if ((param == 0) && (msg == 0))
-	{
-		return (LRESULT)mlwnd;
-	}
-
-	if (IsWindow(mlwnd))
-	{
-		return SendMessage(mlwnd, WM_ML_IPC, param, msg);
-	}
-
-	return 0;
-}
-
-BOOL Menu_TrackPopup(HMENU hMenu, UINT fuFlags, int x, int y, HWND hwnd)
-{
-	if (hMenu == NULL)
-	{
-		return NULL;
-	}
-
-	if (IsWindow((HWND)sendMlIpc(0, 0)))
-	{
-		MLSKINNEDPOPUP popup = {sizeof(MLSKINNEDPOPUP)};
-		popup.hmenu = hMenu;
-		popup.fuFlags = fuFlags;
-		popup.x = x;
-		popup.y = y;
-		popup.hwnd = hwnd;
-		popup.skinStyle = SMS_USESKINFONT;
-		return (INT)sendMlIpc(ML_IPC_TRACKSKINNEDPOPUPEX, (WPARAM)&popup);
-	}
-	return TrackPopupMenu(hMenu, fuFlags, x, y, 0, hwnd, NULL);
 }
 
 bool ProcessMenuResult(UINT command, HWND parent)
@@ -785,6 +1375,14 @@ bool ProcessMenuResult(UINT command, HWND parent)
 			{
 				break;
 			}
+
+			// trigger any in-progress processing to be cancelled
+			// so nothing should be being re-saved out on clearing
+			kill_threads = 1;
+
+			ProcessStop();
+
+			ClearProcessingHandles();
 
 			// remove all *.cache files in the users current cache folder.
 			//
@@ -813,17 +1411,57 @@ bool ProcessMenuResult(UINT command, HWND parent)
 		}
 		case ID_SUBMENU_RERENDER:
 		{
-			if (!PathIsURL(szFilename))
+			if (!PathIsURL(szFilename) || !_wcsnicmp(szFilename, L"zip://", 6))
 			{
-				wchar_t cacheFile[MAX_PATH] = {0};
-				PathCombine(cacheFile, szWaveCacheDir, PathFindFileName(szFilename));
-				StringCchCat(cacheFile, MAX_PATH, L".cache");
-				if (PathFileExists(cacheFile))
+				// support the older & newer cache filenames
+				wchar_t filename[MAX_PATH] = {0};
+				PathCombine(filename, szWaveCacheDir, PathFindFileName(szFilename));
+				StringCchCat(filename, MAX_PATH, L".cache");
+				if (PathFileExists(filename))
 				{
-					DeleteFile(cacheFile);
+					DeleteFile(filename);
+				}
+				else
+				{
+					wchar_t cacheFile[61] = {0};
+					if (GetFilenameHash(szFilename, cacheFile))
+				{
+						PathCombine(filename, szWaveCacheDir, cacheFile);
+						if (PathFileExists(filename))
+						{
+							DeleteFile(filename);
+						}
+					}
 				}
 
-				ProcessFilePlayback(szFilename, TRUE);
+				bIsProcessing = false;
+				kill_threads = 1;
+
+				ProcessStop();
+
+				std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
+				while (itr != processing_list.end())
+				{
+					// found it so no need to re-add
+					// as that's just going to cause
+					// more processing / duplication
+					if (StrStrI(szFilename, (*itr).first.c_str()))
+					{
+						WaitForSingleObject((*itr).second, INFINITE);
+						CloseHandle((*itr).second);
+						processing_list.erase(itr);
+						break;
+					}
+					++itr;
+				}
+
+				processing_list.clear();
+
+				// wait a moment so if it was already
+				// processing then that can clean-up
+				// before we attempt a new processing
+				Sleep(10);
+				PostMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)1, delay_load);
 			}
 			break;
 		}
@@ -862,11 +1500,49 @@ bool ProcessMenuResult(UINT command, HWND parent)
 			WritePrivateProfileInt(L"Waveseek", L"hideTooltip", hideTooltip, ini_file);
 			break;
 		}
+		case ID_SUBMENU_RENDERWAVEFORMFORAUDIO:
+		{
+			audioOnly = (!audioOnly);
+			WritePrivateProfileInt(L"Waveseek", L"audioOnly", audioOnly, ini_file);
+			break;
+		}
+		case ID_SUBMENU_RENDERWAVEFORMUSINGALOWERPRIORITY:
+		{
+			lowerpriority = (!lowerpriority);
+			WritePrivateProfileInt(L"Waveseek", L"lowerpriority", lowerpriority, ini_file);
+
+			// update the threads that are already running
+			std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
+			while (itr != processing_list.end())
+			{
+				HANDLE handle = (*itr).second;
+				if (handle != NULL)
+				{
+					SuspendThread(handle);
+					SetThreadPriority(handle, (!lowerpriority ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_LOWEST));
+					ResumeThread(handle);
+				}
+			}
+			break;
+		}
+		case ID_SUBMENU_USELEGACYPROCESSINGMODE:
+		{
+			legacy = (!legacy);
+			WritePrivateProfileInt(L"Waveseek", L"legacy", legacy, ini_file);
+			break;
+		}
+		case ID_SUBMENU_SHOWDEBUGGINGMESSAGES:
+		{
+			debug = (!debug);
+			WritePrivateProfileInt(L"Waveseek", L"debug", debug, ini_file);
+			break;
+		}
 		case ID_SUBMENU_ABOUT:
 		{
 			wchar_t message[512] = {0};
 			StringCchPrintf(message, ARRAYSIZE(message), WASABI_API_LNGSTRINGW(IDS_ABOUT_STRING), TEXT(__DATE__));
-			MessageBox(plugin.hwndParent, message, pluginTitleW, 0);
+			//MessageBox(plugin.hwndParent, message, pluginTitleW, 0);
+			AboutMessageBox(plugin.hwndParent, message, pluginTitleW);
 			break;
 		}
 		default:
@@ -877,13 +1553,25 @@ bool ProcessMenuResult(UINT command, HWND parent)
 	return true;
 }
 
-INT_PTR CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+void SetupConfigMenu(HMENU popup)
+{
+	CheckMenuItem(popup, ID_CONTEXTMENU_CLICKTRACK, MF_BYCOMMAND | (clickTrack ? MF_CHECKED : MF_UNCHECKED));
+	CheckMenuItem(popup, ID_SUBMENU_SHOWCUEPOINTS, MF_BYCOMMAND | (showCuePoints ? MF_CHECKED : MF_UNCHECKED));
+	CheckMenuItem(popup, ID_SUBMENU_HIDEWAVEFORMTOOLTIP, MF_BYCOMMAND | (hideTooltip ? MF_CHECKED : MF_UNCHECKED));
+	CheckMenuItem(popup, ID_SUBMENU_RENDERWAVEFORMFORAUDIO, MF_BYCOMMAND | (audioOnly ? MF_CHECKED : MF_UNCHECKED));
+	CheckMenuItem(popup, ID_SUBMENU_RENDERWAVEFORMUSINGALOWERPRIORITY, MF_BYCOMMAND | (lowerpriority ? MF_CHECKED : MF_UNCHECKED));
+	CheckMenuItem(popup, ID_SUBMENU_USELEGACYPROCESSINGMODE, MF_BYCOMMAND | (legacy ? MF_CHECKED : MF_UNCHECKED));
+	CheckMenuItem(popup, ID_SUBMENU_SHOWDEBUGGINGMESSAGES, MF_BYCOMMAND | (debug ? MF_CHECKED : MF_UNCHECKED));
+}
+
+LRESULT CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
+							  UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
 {
 	switch (uMsg)
 	{
 		case WM_WA_MPEG_EOF:
 		{
-			FinishProcessingFile();
+			FinishProcessingFile(szWaveCacheFile, NULL);
 			break;
 		}
 		case WM_WA_IPC:
@@ -916,9 +1604,7 @@ INT_PTR CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 			HMENU hMenu = WASABI_API_LOADMENUW(IDR_CONTEXTMENU);
 			HMENU popup = GetSubMenu(hMenu, 0);
-			CheckMenuItem(popup, ID_CONTEXTMENU_CLICKTRACK, MF_BYCOMMAND | (clickTrack ? MF_CHECKED : MF_UNCHECKED));
-			CheckMenuItem(popup, ID_SUBMENU_SHOWCUEPOINTS, MF_BYCOMMAND | (showCuePoints ? MF_CHECKED : MF_UNCHECKED));
-			CheckMenuItem(popup, ID_SUBMENU_HIDEWAVEFORMTOOLTIP, MF_BYCOMMAND | (hideTooltip ? MF_CHECKED : MF_UNCHECKED));
+			SetupConfigMenu(popup);
 
 			// this will handle the menu being shown not via the mouse actions
 			// so is positioned just below the header if no selection but there's a queue
@@ -931,7 +1617,7 @@ INT_PTR CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 				yPos = (short)rc.top;
 			}
 
-			ProcessMenuResult(Menu_TrackPopup(popup, TPM_LEFTALIGN | TPM_LEFTBUTTON |
+			ProcessMenuResult(TrackPopup(popup, TPM_LEFTALIGN | TPM_LEFTBUTTON |
 							  TPM_RIGHTBUTTON | TPM_RETURNCMD, xPos, yPos, hWnd), hWnd);
 
 			DestroyMenu(hMenu);
@@ -939,7 +1625,7 @@ INT_PTR CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		}
 	}
 
-	return CallWindowProc(lpWndProc, hWnd, uMsg, wParam, lParam);
+	return DefSubclass(hWnd, uMsg, wParam, lParam);
 }
 
 INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -965,7 +1651,7 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 										 plugin.hDllInstance, NULL);
 
 			ti.cbSize = sizeof(TOOLINFO);
-			ti.uFlags = TTF_IDISHWND | TTF_TRACK | TTF_ABSOLUTE;
+			ti.uFlags = TTF_IDISHWND | TTF_TRACK | TTF_ABSOLUTE | TTF_TRANSPARENT;
 			ti.hwnd = (HWND)lParam;
 			ti.hinst = plugin.hDllInstance;
 			ti.uId = (UINT_PTR)lParam;
@@ -985,10 +1671,26 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		}
 		case WM_ERASEBKGND:
 		{
+			return 1;
+		}
+		case WM_PAINT:
+		{
+			PAINTSTRUCT psPaint = {0};
+			HDC hdc = BeginPaint(hWnd, &psPaint);
+			// we get the client area instead of
+			// using the paint area as it's not
+			// the same if partially off-screen
 			RECT rc = {0};
 			GetClientRect(hWnd, &rc);
-			PaintWaveform((HDC)wParam, rc);
-			return 1;
+			PaintWaveform(hdc, rc);
+			EndPaint(hWnd, &psPaint);
+			break;
+		}
+		// make sure we catch all appropriate skin changes
+		case WM_USER + 0x202:	// WM_DISPLAYCHANGE / IPC_SKIN_CHANGED_NEW / ML_MSG_SKIN_CHANGED
+		{
+			ProcessSkinChange();
+			break;
 		}
 		case WM_LBUTTONDBLCLK:
 		{
@@ -1082,7 +1784,8 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 					SendMessage(hWndToolTip, TTM_TRACKACTIVATE, TRUE, (LPARAM)&ti);
 					SendMessage(hWndToolTip, TTM_SETTOOLINFO, 0, (LPARAM)&ti);
-					SendMessage(hWndToolTip, TTM_TRACKPOSITION, 0, (LPARAM)MAKELONG(pt.x + 11, pt.y - 2));
+					//SendMessage(hWndToolTip, TTM_TRACKPOSITION, 0, (LPARAM)MAKELONG(pt.x + 11, pt.y - 2));
+					SendMessage(hWndToolTip, TTM_TRACKPOSITION, 0, (LPARAM)MAKELONG(pt.x + 20, pt.y/* - 2*/));
 				}
 			}
 			break;
@@ -1096,108 +1799,25 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 	return 0;
 }
 
-
-int IsInPlaylistArea(HWND playlist_wnd, int mode)
-{
-	POINT pt = {0};
-	RECT rc = {0};
-
-	GetCursorPos(&pt);
-	GetClientRect(playlist_wnd, &rc);
-
-	ScreenToClient(playlist_wnd, &pt);
-	// this corrects so the selection works correctly on the selection boundary
-	pt.y -= 2;
-
-	if (!mode)
-	{
-		// corrects for the window area so it only happens if a selection happens
-		rc.top += 18;
-		rc.left += 12;
-		rc.right -= 19;
-		rc.bottom -= 40;
-		return PtInRect(&rc, pt);
-	}
-	else
-	{
-		rc.bottom -= 13;
-		rc.top = rc.bottom - 19;
-		rc.left += 14;
-
-		for (int i = 0; i < 4; i++)
+LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
+								   UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
 		{
-			rc.right = rc.left + 22;
-			if (PtInRect(&rc, pt))
+	if (uMsg == WM_WA_IPC)
 			{
-				return 1;	
-			}
-			else
-			{
-				rc.left = rc.right + 7;
-			}
-		}
-		return 0;
-	}
-}
-
-static LRESULT WINAPI SubclassPlaylistProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-	// this will detect false clicks such as when the menus are shown in the classic playlist editor
-	if (msg == WM_LBUTTONDOWN)
-	{
-		if (IsInPlaylistArea(hwnd, 1))
-		{
-			on_click = 1;
-		}
-	}
-
-	LRESULT ret = CallWindowProc(oldPlaylistWndProc, hwnd, msg, wParam, lParam);
-
-	// this will then handle the detection of a proper click in the playlist editor so
-	// if enabled then we can get and show the album art for the selected playlist item
-	if (msg == WM_LBUTTONDOWN && !(GetKeyState(VK_MENU) & 0x1000) &&
-								 !(GetKeyState(VK_SHIFT) & 0x1000) &&
-								 !(GetKeyState(VK_CONTROL) & 0x1000))
-	{
-		if (!on_click && clickTrack)
-		{
-			POINT pt = {0};
-			INT index = 0;
-			GetCursorPos(&pt);
-			ScreenToClient(hwnd, &pt);
-			// this corrects so the selection works correctly on the selection boundary
-			pt.y -= 2;
-			index = SendMessage(hwnd, WM_WA_IPC, IPC_PE_GETIDXFROMPOINT, (LPARAM)&pt);
-			if (IsInPlaylistArea(hwnd, 0))
-			{
-				// bounds check things
-				if (index < SendMessage(hwnd, WM_WA_IPC, IPC_PE_GETINDEXTOTAL, 0))
+		if (lParam == IPC_PLAYING_FILEW)
 				{
-					// art change to show the selected item in the playlist editor
-					ProcessFilePlayback((const wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, index, IPC_GETPLAYLISTFILEW), FALSE);
-				}
-			}
-		}
-		else
-		{
-			// needs to do an increment for the next click will be a false
-			on_click = ((on_click == 1) ? 2 : 0);
-		}
+			// we can sometimes see this message before the following
+			// delay load message so we need to ensure that the paths
+			// are setup correctly otherwise we get wrongly located
+			// waveseek_in_*.dll in the music folders loaded from :(
+			GetFilePaths();
+			ProcessFilePlayback((const wchar_t*)wParam, TRUE);
 	}
-	else if (msg == WM_COMMAND)
+		else if (lParam == IPC_PLITEM_SELECTED_CHANGED)
 	{
-		// this is used for tracking the selection of items in the playlist editor
-		// so we can update the album art when doing a single up/down selection
-		if (((LOWORD(wParam) == ID_PE_SCUP) || (LOWORD(wParam) == ID_PE_SCDOWN)) && clickTrack)
-		{
-			// only do on up/down without any other keyboard accelerators pressed
-			if (!(GetKeyState(VK_MENU) & 0x1000) &&
-			    !(GetKeyState(VK_SHIFT) & 0x1000) &&
-			    !(GetKeyState(VK_CONTROL) & 0x1000))
-			{
-				if (SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_PLAYLIST_GET_SELECTED_COUNT))
+			if (clickTrack)
 				{
-					const int sel = (int)SendMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)-1, IPC_PLAYLIST_GET_NEXT_SELECTED);
+				const int sel = (wParam - 1);
 					if (sel != -1)
 					{
 						// art change to show the selected item in the playlist editor
@@ -1205,44 +1825,16 @@ static LRESULT WINAPI SubclassPlaylistProc(HWND hwnd, UINT msg, WPARAM wParam, L
 					}
 				}
 			}
-		}
-	}
-
-	return ret;
-}
-
-LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
-{
-	if (uMsg == WM_DISPLAYCHANGE)
-	{
-		ProcessSkinChange();
-	}
-	else if (uMsg == WM_WA_IPC)
-	{
-		// make sure we catch all appropriate skin changes
-		if (lParam == IPC_SKIN_CHANGED ||
-			lParam == IPC_CB_RESETFONT ||
-			lParam == IPC_FF_ONCOLORTHEMECHANGED)
-		{
-			ProcessSkinChange();
-		}
-		else if (lParam == IPC_PLAYING_FILEW)
-		{
-			// we can sometimes see this message before the following
-			// delay load message so we need to ensure that the paths
-			// are setup correctly otherwise we get wrongly located
-			// waveseek_in_*.dll in the music folders loaded from :(
-			GetFilePaths();
-			ProcessFilePlayback((const wchar_t*)wParam, TRUE);
-		}
 		else if (lParam == delay_load)
 		{
+			if (!wParam)
+			{
 			GetFilePaths();
 
 			// just incase we need to handle a migration update, we check
 			// for a Winamp\Plugins\wavecache folder and if found then we
 			// move it into the correct settings folder (due to UAC, etc)
-			if (!GetPrivateProfileInt(L"Migrate", 0))
+				/*if (!GetPrivateProfileInt(L"Migrate", 0))
 			{
 				wchar_t szOldWaveCacheDir[MAX_PATH] = {0};
 				PathCombine(szOldWaveCacheDir, szDLLPath, L"wavecache");
@@ -1273,13 +1865,19 @@ LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 					RemoveDirectory(szOldWaveCacheDir);
 				}
 				WritePrivateProfileString(L"Waveseek", L"Migrate", L"1", ini_file);
-			}
+				}*/
 
 			clickTrack = GetPrivateProfileInt(L"clickTrack", 1);
 			showCuePoints = GetPrivateProfileInt(L"showCuePoints", 0);
 			hideTooltip = GetPrivateProfileInt(L"hideTooltip", 0);
+				audioOnly = GetPrivateProfileInt(L"audioOnly", 1);
+				lowerpriority = GetPrivateProfileInt(L"lowerpriority", 0);
+				legacy = GetPrivateProfileInt(L"legacy", 0);
+				debug = GetPrivateProfileInt(L"debug", 0);
 
-			ProcessSkinChange();
+				// just get the colours but no need to do
+				// a refresh as that will cause a ui lag!
+				ProcessSkinChange(TRUE);
 
 			// for the purposes of this example we will manually create an accelerator table so
 			// we can use IPC_REGISTER_LOWORD_COMMAND to get a unique id for the menu items we
@@ -1299,12 +1897,13 @@ LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 
 			// now we will attempt to create an embedded window which adds its own main menu entry
 			// and related keyboard accelerator (like how the media library window is integrated)
+				embed.flags |= EMBED_FLAGS_SCALEABLE_WND;	// double-size support!
 			hWndWaveseek = CreateEmbeddedWindow(&embed, embed_guid);
 
 			// once the window is created we can then specify the window title and menu integration
 			SetWindowText(hWndWaveseek, WASABI_API_LNGSTRINGW(IDS_WAVEFORM_SEEKER));
 
-			lpWndProc = (WNDPROC)(LONG_PTR)SetWindowLongPtr(hWndWaveseek, GWLP_WNDPROC, (LONG_PTR)EmdedWndProc);
+				Subclass(hWndWaveseek, EmdedWndProc);
 
 			HACCEL accel = WASABI_API_LOADACCELERATORSW(IDR_ACCELERATOR_WND);
 			if (accel)
@@ -1314,18 +1913,17 @@ LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 
 			hWndInner = CreateDialogParam(plugin.hDllInstance, MAKEINTRESOURCE(IDD_VIEW),
 										  hWndWaveseek, InnerWndProc, (LPARAM)hWndWaveseek);
+				// just to be certain if the skinned preferences support is installed
+				// we want to ensure that we're not going to have it touch our window
+				// as it can otherwise cause some occassional drawing issues/clashes.
+				SetProp(hWndInner, L"SKPrefs_Ignore", (HANDLE)1);
 
-			ProcessFilePlayback((const wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC,
-								SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETLISTPOS),
-								IPC_GETPLAYLISTFILEW), FALSE);
-
-			HWND pe_wnd = (HWND)SendMessage(plugin.hwndParent, WM_WA_IPC, IPC_GETWND_PE, IPC_GETWND);
-			oldPlaylistWndProc = (WNDPROC)SetWindowLongPtr(pe_wnd, GWLP_WNDPROC, (LONG_PTR)SubclassPlaylistProc);
+				ProcessFilePlayback((const wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GET_PLAYING_FILENAME), FALSE);
 
 			WASABI_API_LNGSTRINGW_BUF(IDS_WAVEFORM_UNAVAILABLE, szUnavailable, ARRAYSIZE(szUnavailable));
 			WASABI_API_LNGSTRINGW_BUF(IDS_WAVEFORM_UNAVAILABLE_BAD_PLUGIN, szBadPlugin, ARRAYSIZE(szBadPlugin));
 			WASABI_API_LNGSTRINGW_BUF(IDS_STREAMS_NOT_SUPPORTED, szStreamsNotSupported, ARRAYSIZE(szStreamsNotSupported));
-
+				WASABI_API_LNGSTRINGW_BUF(IDS_TRY_LEGACY_MODE, szLegacy, ARRAYSIZE(szLegacy));
 
 			// Winamp can report if it was started minimised which allows us to control our window
 			// to not properly show on startup otherwise the window will appear incorrectly when it
@@ -1343,6 +1941,14 @@ LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 				}
 			}
 		}
+			else if (wParam == 1)
+			{
+				// allow new threads to be spawned
+				// after we've cleaned up existing
+				kill_threads = 0;
+				ProcessFilePlayback(szFilename, TRUE);
+			}
+		}
 	}
 
 	// this will handle the message needed to be caught before the original window
@@ -1351,7 +1957,7 @@ LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 	HandleEmbeddedWindowWinampWindowMessages(hWndWaveseek, WINAMP_WAVEFORM_SEEK_MENUID,
 												 &embed, TRUE, hWnd, uMsg, wParam, lParam);
 
-	LRESULT ret = CallWindowProc(lpWndProcOld, hWnd, uMsg, wParam, lParam);
+	LRESULT ret = DefSubclass(hWnd, uMsg, wParam, lParam);
 
 	// this will handle the message needed to be caught after the original window
 	// proceedure of the subclass can process it. with multiple windows then this
@@ -1365,7 +1971,7 @@ LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 int PluginInit() 
 {
 #ifdef WACUP_BUILD
-	WASABI_API_SVC = GetServiceAPIPtr();
+	WASABI_API_SVC = plugin.service;
 #else
 	// load all of the required wasabi services from the winamp client
 	WASABI_API_SVC = reinterpret_cast<api_service*>(SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GET_API_SERVICE));
@@ -1373,21 +1979,26 @@ int PluginInit()
 #endif
 	if (WASABI_API_SVC != NULL)
 	{
+		ServiceBuild(WASABI_API_SVC, WASABI_API_DECODEFILE2, decodeFile2GUID);
+#ifdef WACUP_BUILD
+		WASABI_API_APP = plugin.app;
+		WASABI_API_LNG = plugin.language;
+#else
+		ServiceBuild(WASABI_API_SVC, WASABI_API_APP, applicationApiServiceGuid);
 		ServiceBuild(WASABI_API_SVC, WASABI_API_LNG, languageApiGUID);
+#endif
 		// TODO add to lang.h
 		WASABI_API_START_LANG(plugin.hDllInstance, embed_guid);
 
 		StringCchPrintf(pluginTitleW, ARRAYSIZE(pluginTitleW), WASABI_API_LNGSTRINGW(IDS_PLUGIN_NAME), TEXT(PLUGIN_VERSION));
 		plugin.description = (char*)pluginTitleW;
 
-		ServiceBuild(WASABI_API_SVC, WASABI_API_APP, applicationApiServiceGuid);
-
-		lpWndProcOld = (WNDPROC)SetWindowLongPtr(plugin.hwndParent, GWLP_WNDPROC, (LONG_PTR)WinampHookWndProc);
+		Subclass(plugin.hwndParent, WinampHookWndProc);
 
 		// restore / process the current file so we're showing something on load
 		// but we delay it a bit until Winamp is in a better state especially if
 		// we then fire offa file processing action otherwise we slow down startup
-		delay_load = (int)SendMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)&"wave_seeker", IPC_REGISTER_WINAMP_IPCMESSAGE);
+		delay_load = RegisterIPC((WPARAM)&"wave_seeker");
 		PostMessage(plugin.hwndParent, WM_WA_IPC, 0, delay_load);
 
 		return GEN_INIT_SUCCESS;
@@ -1414,9 +2025,8 @@ void PluginConfig()
 	ListView_GetItemRect(list, ListView_GetSelectionMark(list), &r, LVIR_BOUNDS);
 	ClientToScreen(list, (LPPOINT)&r);
 
-	CheckMenuItem(popup, ID_CONTEXTMENU_CLICKTRACK, MF_BYCOMMAND | (clickTrack ? MF_CHECKED : MF_UNCHECKED));
-	CheckMenuItem(popup, ID_SUBMENU_SHOWCUEPOINTS, MF_BYCOMMAND | (showCuePoints ? MF_CHECKED : MF_UNCHECKED));
-	CheckMenuItem(popup, ID_SUBMENU_HIDEWAVEFORMTOOLTIP, MF_BYCOMMAND | (hideTooltip ? MF_CHECKED : MF_UNCHECKED));
+	SetupConfigMenu(popup);
+
 	ProcessMenuResult(TrackPopupMenu(popup, TPM_RETURNCMD | TPM_LEFTBUTTON, r.left, r.top, 0, list, NULL), list);
 
 	DestroyMenu(hMenu);
@@ -1424,7 +2034,11 @@ void PluginConfig()
 
 void PluginQuit()
 {
+	kill_threads = 1;
+
 	ProcessStop();
+
+	ClearProcessingHandles();
 
 	if (no_uninstall)
 	{
@@ -1442,35 +2056,27 @@ void PluginQuit()
 		DestroyWindow(hWndWaveseek);
 	}
 
-	if (hbrBackground)
-	{
-		DeleteObject(hbrBackground);
-		hbrBackground = NULL;
-	}
-
-	if (hFont)
-	{
-		DeleteFont(hFont);
-		hFont = NULL;
-	}
-
 	if (PathFileExists(szTempDLLDestination))
 	{
 		DeleteFile(szTempDLLDestination);
 	}
 
+	ServiceRelease(WASABI_API_SVC, WASABI_API_DECODEFILE2, decodeFile2GUID);
+	ServiceRelease(WASABI_API_SVC, WASABI_API_SKIN, skinApiServiceGuid);
+#ifndef WACUP_BUILD
+	ServiceRelease(WASABI_API_SVC, WASABI_API_LNG, languageApiGUID);
 	ServiceRelease(WASABI_API_SVC, WASABI_API_APP, applicationApiServiceGuid);
+#endif
+
+	UnSubclass(plugin.hwndParent, WinampHookWndProc);
 }
 
 winampGeneralPurposePlugin plugin =
 {
-	GPPHDR_VER_U,
-	(char *)L"Waveform Seeker v2.0",
-	PluginInit,
-	PluginConfig,
-	PluginQuit,
-	NULL,
-	NULL,
+	GPPHDR_VER_WACUP,
+	(char *)L"Waveform Seeker v" TEXT(PLUGIN_VERSION),
+	PluginInit, PluginConfig, PluginQuit,
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
 
 extern "C" __declspec( dllexport ) winampGeneralPurposePlugin * winampGetGeneralPurposePlugin()
@@ -1491,14 +2097,3 @@ extern "C"__declspec(dllexport) int winampUninstallPlugin(HINSTANCE hDllInst, HW
 	// as we're doing too much in subclasses, etc we cannot allow for on-the-fly removal so need to do a normal reboot
 	return GEN_PLUGIN_UNINSTALL_REBOOT;
 }
-
-#ifndef _DEBUG
-BOOL WINAPI _DllMainCRTStartup(HINSTANCE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
-{
-	if (ul_reason_for_call == DLL_PROCESS_ATTACH)
-	{
-		DisableThreadLibraryCalls(hModule);
-	}
-	return TRUE;
-}
-#endif
