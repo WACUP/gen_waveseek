@@ -26,8 +26,6 @@ void DestroyEmbeddedWindow(embedWindowState* embedWindow);
 BOOL SetEmbeddedWindowMinimizedMode(HWND embeddedWindow, BOOL fMinimized);
 BOOL EmbeddedWindowIsMinimizedMode(HWND embeddedWindow);
 
-BOOL WritePrivateProfileInt(LPCWSTR lpAppName, LPCWSTR lpKeyName, int value, LPCWSTR lpFileName);
-
 // these functions are used to process any relevant menu or window messages which the
 // embedded window needs to detect inorder to work (especially betweeen instances)
 LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -36,7 +34,6 @@ LRESULT HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, emb
 
 // shared variables with the embedwnd code this can be altered if you want to use
 // different variables or means but is done like this to simplify this example
-extern LPWSTR ini_file;
 extern winampGeneralPurposePlugin plugin;
 extern BOOL visible, old_visible;
 

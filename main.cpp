@@ -29,15 +29,11 @@
 #ifdef WACUP_BUILD
 #include <loader/loader/paths.h>
 #include <loader/loader/utils.h>
+#include <loader/loader/ini.h>
 #include <openssl/sha.h>
 #endif
 
-#define PLUGIN_VERSION "3.5.4"
-
-#ifdef GetPrivateProfileInt
-#undef GetPrivateProfileInt
-#define GetPrivateProfileInt(field,param) GetPrivateProfileIntW(INI_FILE_SECTION,field,param,ini_file)
-#endif
+#define PLUGIN_VERSION "3.5.6"
 
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS
@@ -101,7 +97,10 @@ typedef In_Module *(*PluginGetter)();
 #define TIMER_ID 31337
 #define TIMER_FREQ 125	// ~8fps
 
-wchar_t *szDLLPath = 0, *ini_file = 0,
+wchar_t 
+#ifndef WACUP_BUILD
+		*szDLLPath = 0, *ini_file = 0,
+#endif
 		szFilename[MAX_PATH] = {0},
 		szWaveCacheDir[MAX_PATH] = {0},
 		szWaveCacheFile[MAX_PATH] = {0},
@@ -133,11 +132,11 @@ void PluginConfig();
 
 void GetFilePaths()
 {
-	if (!ini_file)
+	if (!szWaveCacheDir[0])
 	{
 		// find the winamp.ini for the Winamp install being used
 #ifdef WACUP_BUILD
-		ini_file = (wchar_t *)GetPaths()->winamp_ini_file;
+		//ini_file = (wchar_t *)GetPaths()->winamp_ini_file;
 		wcsncpy(szWaveCacheDir, GetPaths()->settings_dir, ARRAYSIZE(szWaveCacheDir));
 #else
 		ini_file = (wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETINIFILEW);
@@ -151,8 +150,10 @@ void GetFilePaths()
 		PathAppend(szWaveCacheDir, L"Plugins\\wavecache");
 		CreateDirectory(szWaveCacheDir, NULL);
 
+#ifndef WACUP_BUILD
 		// find the correct Winamp\Plugins folder (using native api before making a good guess at it)
 		szDLLPath = (wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETPLUGINDIRECTORYW);
+#endif
 	}
 }
 
@@ -296,9 +297,9 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		}
 		else
 		{
-			if (decodeFile2)
+			if (WASABI_API_DECODEFILE2)
 			{
-				decodeFile2->CloseAudio(decoder);
+				WASABI_API_DECODEFILE2->CloseAudio(decoder);
 			}
 
 			goto abort;
@@ -368,9 +369,9 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 
 		free(data);
 
-		if (decodeFile2)
+		if (WASABI_API_DECODEFILE2)
 		{
-			decodeFile2->CloseAudio(decoder);
+			WASABI_API_DECODEFILE2->CloseAudio(decoder);
 		}
 
 		if (!kill_threads)
@@ -434,7 +435,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 	// first we try to use the decoder api which saves having to do any
 	// of the plug-in copying which is better and works with most of the
 	// popular formats (as long as the input plug-in has support for it)
-	if (decodeFile2 && decodeFile2->DecoderExists(szFn))
+	if (WASABI_API_DECODEFILE2 && WASABI_API_DECODEFILE2->DecoderExists(szFn))
 	{
 		parameters.flags = AUDIOPARAMETERS_MAXCHANNELS | AUDIOPARAMETERS_MAXSAMPLERATE | AUDIOPARAMETERS_NO_RESAMPLE;
 		parameters.channels = 2;
@@ -443,7 +444,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 
 		wchar_t fn[MAX_PATH] = {0};
 		wcsncpy(fn, szFn, ARRAYSIZE(fn));
-		ifc_audiostream *decoder = (decodeFile2 ? decodeFile2->OpenAudioBackground(fn, &parameters) : NULL);
+		ifc_audiostream *decoder = (WASABI_API_DECODEFILE2 ? WASABI_API_DECODEFILE2->OpenAudioBackground(fn, &parameters) : NULL);
 		if (decoder)
 		{
 			DWORD dwThreadId = 0;
@@ -458,9 +459,9 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 			}
 			else
 			{
-				if (decodeFile2)
+				if (WASABI_API_DECODEFILE2)
 				{
-					decodeFile2->CloseAudio(decoder);
+					WASABI_API_DECODEFILE2->CloseAudio(decoder);
 				}
 			}
 		}
@@ -486,6 +487,9 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 				StrStrI(filename, L"in_mod.dll") ||
 				StrStrI(filename, L"in_mp3.dll") ||
 				StrStrI(filename, L"in_mp4.dll") ||
+				StrStrI(filename, L"in_snes.dll") ||
+				StrStrI(filename, L"in_snes.trb") ||
+				StrStrI(filename, L"in_snesamp.dll") ||
 				StrStrI(filename, L"in_vgmstream.dll") ||
 				StrStrI(filename, L"in_wave.dll") ||
 				StrStrI(filename, L"in_wm.dll"))
@@ -925,7 +929,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 		}
 
 		wchar_t szCue[MAX_PATH] = {0};
-		wcsncpy(szCue, szFn, MAX_PATH);
+		wcsncpy(szCue, szFn, MAX_PATH - 1);
 		PathRenameExtension(szCue, L".cue");
 
 		if (PathFileExists(szCue))
@@ -1468,7 +1472,7 @@ bool ProcessMenuResult(UINT command, HWND parent)
 		case ID_CONTEXTMENU_CLICKTRACK:
 		{
 			clickTrack = (!clickTrack);
-			WritePrivateProfileInt(L"Waveseek", L"clickTrack", clickTrack, ini_file);
+			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"clickTrack", clickTrack);
 
 			// update as needed to match the new setting
 			// with fallback to the current playing if
@@ -1491,25 +1495,25 @@ bool ProcessMenuResult(UINT command, HWND parent)
 		case ID_SUBMENU_SHOWCUEPOINTS:
 		{
 			showCuePoints = (!showCuePoints);
-			WritePrivateProfileInt(L"Waveseek", L"showCuePoints", showCuePoints, ini_file);
+			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"showCuePoints", showCuePoints);
 			break;
 		}
 		case ID_SUBMENU_HIDEWAVEFORMTOOLTIP:
 		{
 			hideTooltip = (!hideTooltip);
-			WritePrivateProfileInt(L"Waveseek", L"hideTooltip", hideTooltip, ini_file);
+			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"hideTooltip", hideTooltip);
 			break;
 		}
 		case ID_SUBMENU_RENDERWAVEFORMFORAUDIO:
 		{
 			audioOnly = (!audioOnly);
-			WritePrivateProfileInt(L"Waveseek", L"audioOnly", audioOnly, ini_file);
+			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"audioOnly", audioOnly);
 			break;
 		}
 		case ID_SUBMENU_RENDERWAVEFORMUSINGALOWERPRIORITY:
 		{
 			lowerpriority = (!lowerpriority);
-			WritePrivateProfileInt(L"Waveseek", L"lowerpriority", lowerpriority, ini_file);
+			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"lowerpriority", lowerpriority);
 
 			// update the threads that are already running
 			std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
@@ -1528,13 +1532,13 @@ bool ProcessMenuResult(UINT command, HWND parent)
 		case ID_SUBMENU_USELEGACYPROCESSINGMODE:
 		{
 			legacy = (!legacy);
-			WritePrivateProfileInt(L"Waveseek", L"legacy", legacy, ini_file);
+			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"legacy", legacy);
 			break;
 		}
 		case ID_SUBMENU_SHOWDEBUGGINGMESSAGES:
 		{
 			debug = (!debug);
-			WritePrivateProfileInt(L"Waveseek", L"debug", debug, ini_file);
+			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"debug", debug);
 			break;
 		}
 		case ID_SUBMENU_ABOUT:
@@ -1834,7 +1838,7 @@ LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 			// just incase we need to handle a migration update, we check
 			// for a Winamp\Plugins\wavecache folder and if found then we
 			// move it into the correct settings folder (due to UAC, etc)
-				/*if (!GetPrivateProfileInt(L"Migrate", 0))
+				/*if (!GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"Migrate", 0))
 			{
 				wchar_t szOldWaveCacheDir[MAX_PATH] = {0};
 				PathCombine(szOldWaveCacheDir, szDLLPath, L"wavecache");
@@ -1864,16 +1868,16 @@ LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 				{
 					RemoveDirectory(szOldWaveCacheDir);
 				}
-				WritePrivateProfileString(L"Waveseek", L"Migrate", L"1", ini_file);
+					SaveNativeIniString(WINAMP_INI, L"Waveseek", L"Migrate", L"1");
 				}*/
 
-			clickTrack = GetPrivateProfileInt(L"clickTrack", 1);
-			showCuePoints = GetPrivateProfileInt(L"showCuePoints", 0);
-			hideTooltip = GetPrivateProfileInt(L"hideTooltip", 0);
-				audioOnly = GetPrivateProfileInt(L"audioOnly", 1);
-				lowerpriority = GetPrivateProfileInt(L"lowerpriority", 0);
-				legacy = GetPrivateProfileInt(L"legacy", 0);
-				debug = GetPrivateProfileInt(L"debug", 0);
+				clickTrack = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"clickTrack", 1);
+				showCuePoints = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"showCuePoints", 0);
+				hideTooltip = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"hideTooltip", 0);
+				audioOnly = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"audioOnly", 1);
+				lowerpriority = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"lowerpriority", 0);
+				legacy = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"legacy", 0);
+				debug = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"debug", 0);
 
 				// just get the colours but no need to do
 				// a refresh as that will cause a ui lag!
@@ -1889,7 +1893,7 @@ LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 			// sized into the frame without having to do any thing ourselves. also this will
 			// only show the window if Winamp was not minimised on close and the window was
 			// open at the time otherwise it will remain hidden
-			old_visible = visible = GetPrivateProfileInt(L"wnd_open", TRUE);
+				old_visible = visible = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"wnd_open", TRUE);
 
 			// finally we add menu items to the main right-click menu and the views menu
 			// with Modern skins which support showing the views menu for accessing windows
@@ -2042,10 +2046,14 @@ void PluginQuit()
 
 	if (no_uninstall)
 	{
-		/*WritePrivateProfileInt(L"Waveseek", L"PosX", embed.r.left, ini_file);
-		WritePrivateProfileInt(L"Waveseek", L"PosY", embed.r.top, ini_file);
-		WritePrivateProfileInt(L"Waveseek", L"SizeX", (embed.r.right - embed.r.left), ini_file);
-		WritePrivateProfileInt(L"Waveseek", L"SizeY", (embed.r.bottom - embed.r.top), ini_file);*/
+		/*SaveNativeIniInt(WINAMP_INI, L"Waveseek",
+						   L"PosX", embed.r.left);
+		SaveNativeIniInt(WINAMP_INI, L"Waveseek",
+						 L"PosY", embed.r.top);
+		SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"SizeX",
+						 (embed.r.right - embed.r.left));
+		SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"SizeY",
+						 (embed.r.bottom - embed.r.top));*/
 		DestroyEmbeddedWindow(&embed);
 	}
 
@@ -2090,7 +2098,7 @@ extern "C"__declspec(dllexport) int winampUninstallPlugin(HINSTANCE hDllInst, HW
 	if (MessageBox(hwndDlg, WASABI_API_LNGSTRINGW(IDS_DO_YOU_ALSO_WANT_TO_REMOVE_SETTINGS),
 				   pluginTitleW, MB_YESNO | MB_DEFBUTTON2) == IDYES)
 	{
-		WritePrivateProfileString(L"Waveseek", 0, 0, ini_file);
+		SaveNativeIniString(WINAMP_INI, L"Waveseek", 0, 0);
 		no_uninstall = 0;
 	}
 

@@ -3,6 +3,7 @@
 #include "embedwnd.h"
 #include <winamp/wa_cup.h>
 #include <loader/loader/utils.h>
+#include <loader/loader/ini.h>
 
 // internal variables
 HMENU main_menu = 0, windows_menu = 0;
@@ -21,37 +22,37 @@ HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID embedWindowG
 	// position of the embedded window when it is created saving addtional handling
 	//
 	// how you store the settings is down to you, this example uses winamp.ini for ease
-	embedWindow->r.left = GetPrivateProfileInt(INI_FILE_SECTION, L"PosX", 301, ini_file);
-	embedWindow->r.top = GetPrivateProfileInt(INI_FILE_SECTION, L"PosY", 377, ini_file);
+	embedWindow->r.left = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"PosX", 301);
+	embedWindow->r.top = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"PosY", 377);
 	
 	//TODO map from the old values?
-	int right = GetPrivateProfileInt(INI_FILE_SECTION, L"wnd_right", -1, ini_file);
-	int bottom = GetPrivateProfileInt(INI_FILE_SECTION, L"wnd_bottom", -1, ini_file);
+	int right = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"wnd_right", -1),
+		bottom = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"wnd_bottom", -1);
 
 	if (right != -1)
 	{
 		embedWindow->r.right = right;
-		WritePrivateProfileString(INI_FILE_SECTION, L"wnd_right", 0, ini_file);
+		SaveNativeIniString(WINAMP_INI, INI_FILE_SECTION, L"wnd_right", 0);
 	}
 	else
 	{
-		embedWindow->r.right = embedWindow->r.left + GetPrivateProfileInt(INI_FILE_SECTION, L"SizeX", 500, ini_file);
+		embedWindow->r.right = embedWindow->r.left + GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"SizeX", 500);
 	}
 
 	if (bottom != -1)
 	{
 		embedWindow->r.bottom = bottom;
-		WritePrivateProfileString(INI_FILE_SECTION, L"wnd_bottom", 0, ini_file);
+		SaveNativeIniString(WINAMP_INI, INI_FILE_SECTION, L"wnd_bottom", 0);
 	}
 	else
 	{
-		embedWindow->r.bottom = embedWindow->r.top + GetPrivateProfileInt(INI_FILE_SECTION, L"SizeY", 87, ini_file);
+		embedWindow->r.bottom = embedWindow->r.top + GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"SizeY", 87);
 	}
 
 	CopyRect(&initial[0], &embedWindow->r);
 
-	initial[1].top = height = GetPrivateProfileInt(INI_FILE_SECTION, L"ff_height", height, ini_file);
-	initial[1].left = width = GetPrivateProfileInt(INI_FILE_SECTION, L"ff_width", width, ini_file);
+	initial[1].top = height = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"ff_height", height);
+	initial[1].left = width = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"ff_width", width);
 
 	// specifying this will prevent the modern skin engine (gen_ff) from adding a menu entry
 	// to the main right-click menu. this is useful if you want to add your own menu item so
@@ -62,32 +63,29 @@ HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID embedWindowG
 	return (HWND)SendMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)embedWindow, IPC_GET_EMBEDIF);
 }
 
-BOOL WritePrivateProfileInt(LPCWSTR lpAppName, LPCWSTR lpKeyName, int value, LPCWSTR lpFileName)
-{
-	WCHAR string[32] = {0};
-	_itow_s(value, string, ARRAYSIZE(string), 10);
-	return WritePrivateProfileString(INI_FILE_SECTION, lpKeyName, string, ini_file);
-}
-
 void DestroyEmbeddedWindow(embedWindowState* embedWindow)
 {
 	if (!EqualRect(&initial[0], &embedWindow->r))
 	{
-		WritePrivateProfileInt(INI_FILE_SECTION, L"PosX", embedWindow->r.left, ini_file);
-		WritePrivateProfileInt(INI_FILE_SECTION, L"PosY", embedWindow->r.top, ini_file);
-		WritePrivateProfileInt(INI_FILE_SECTION, L"SizeX", embedWindow->r.right - embedWindow->r.left, ini_file);
-		WritePrivateProfileInt(INI_FILE_SECTION, L"SizeY", embedWindow->r.bottom - embedWindow->r.top, ini_file);
+		SaveNativeIniInt(WINAMP_INI, INI_FILE_SECTION,
+						 L"PosX", embedWindow->r.left);
+		SaveNativeIniInt(WINAMP_INI, INI_FILE_SECTION,
+						 L"PosY", embedWindow->r.top);
+		SaveNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"SizeX",
+						 (embedWindow->r.right - embedWindow->r.left));
+		SaveNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"SizeY",
+						 (embedWindow->r.bottom - embedWindow->r.top));
 	}
 
 	if (old_visible != visible)
 	{
-		WritePrivateProfileInt(INI_FILE_SECTION, L"wnd_open", visible, ini_file);
+		SaveNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"wnd_open", visible);
 	}
 
 	if (initial[1].top != height || initial[1].left != width)
 	{
-		WritePrivateProfileInt(INI_FILE_SECTION, L"ff_height", height, ini_file);
-		WritePrivateProfileInt(INI_FILE_SECTION, L"ff_width", width, ini_file);
+		SaveNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"ff_height", height);
+		SaveNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"ff_width", width);
 	}
 }
 
@@ -216,7 +214,9 @@ LRESULT HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, emb
 		// these are done before the original window proceedure has been called to
 		// ensure we get the correct size of the window and for checking the menu
 		// item for the embedded window as applicable
-		if ((message == WM_SYSCOMMAND || message == WM_COMMAND) && LOWORD(wParam) == menuId)
+		if (message == WM_SYSCOMMAND || message == WM_COMMAND)
+		{
+			if (LOWORD(wParam) == menuId)
 		{
 			self_update = TRUE;
 			ShowWindow(embedWnd, (IsWindowVisible(embedWnd) ? SW_HIDE : SW_SHOW));
@@ -225,7 +225,7 @@ LRESULT HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, emb
 			self_update = FALSE;
 			return 1;
 		}
-		else if (message == WM_COMMAND && LOWORD(wParam) == WINAMP_REFRESHSKIN)
+			else if (LOWORD(wParam) == WINAMP_REFRESHSKIN)
 		{
 			if (!GetParent(embedWnd))
 			{
@@ -233,17 +233,18 @@ LRESULT HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, emb
 				height = (embedWindow->r.bottom - embedWindow->r.top);
 			}
 		}
+		}
 		else if (message == WM_WA_IPC)
 		{
 			if (lParam == IPC_SKIN_CHANGED_NEW)
 			{
 				PostMessage(GetWindow(embedWnd, GW_CHILD), WM_USER + 0x202, 0, 0);
 			}
-			else if (lParam == IPC_CB_ONSHOWWND)
+			else if ((lParam == IPC_CB_ONSHOWWND) || (lParam == IPC_CB_ONHIDEWND))
 			{
 				if (((HWND)wParam == embedWnd) && !self_update)
 				{
-					visible = TRUE;
+					visible = (lParam == IPC_CB_ONSHOWWND);
 					UpdateEmbeddedWindowsMenu(menuId);
 				}
 			}
@@ -253,7 +254,7 @@ LRESULT HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, emb
 	{
 		// this is used to cope with Winamp being started minimised and will then
 		// re-show the example window when Winamp is being restored to visibility
-		if (message == WM_SIZE && wParam == SIZE_RESTORED)
+		if ((message == WM_SIZE) && (wParam == SIZE_RESTORED))
 		{
 			if (EmbeddedWindowIsMinimizedMode(embedWnd))
 			{
