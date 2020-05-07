@@ -33,7 +33,7 @@
 #include <openssl/sha.h>
 #endif
 
-#define PLUGIN_VERSION "3.5.6"
+#define PLUGIN_VERSION "3.5.8"
 
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS
@@ -286,10 +286,11 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		wcsncpy(szThreadWaveCacheFile, szWaveCacheFile, ARRAYSIZE(szThreadWaveCacheFile));
 
 		// TODO consider changing over to the metadata api
-		LPCWSTR length_str = GetExtendedFileInfoW(szFn, L"length");
-		if (length_str && *length_str)
+		wchar_t buf[16] = { 0 };
+		if (GetExtendedFileInfoW(szFn, L"length", buf,
+								 ARRAYSIZE(buf)) && buf[0])
 		{
-			const int lengthMS = _wtoi(length_str);
+			const int lengthMS = _wtoi(buf);
 			if (lengthMS > 0)
 			{
 				nFramePerWindow = MulDiv(lengthMS, parameters.sampleRate, SAMPLE_BUFFER_SIZE * 1000) + 1;
@@ -447,9 +448,8 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 		ifc_audiostream *decoder = (WASABI_API_DECODEFILE2 ? WASABI_API_DECODEFILE2->OpenAudioBackground(fn, &parameters) : NULL);
 		if (decoder)
 		{
-			DWORD dwThreadId = 0;
 			HANDLE CalcThread = CreateThread(0, 0, (LPTHREAD_START_ROUTINE)CalcWaveformThread,
-											 (LPVOID)decoder, CREATE_SUSPENDED, &dwThreadId);
+											 (LPVOID)decoder, CREATE_SUSPENDED, NULL);
 			if (CalcThread)
 			{
 				SetThreadPriority(CalcThread, (!lowerpriority ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_LOWEST));
@@ -480,6 +480,11 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 			// we got a valid In_Module * so make a temp copy
 			// which we'll then be calling for the processing
 			wchar_t *filename = PathFindFileName(szSource);
+			if (!filename || !*filename)
+			{
+				bUnsupported = 2;
+				return NULL;
+			}
 
 			if (StrStrI(filename, L"in_cdda.dll") ||
 				StrStrI(filename, L"in_flac.dll") ||
@@ -490,6 +495,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 				StrStrI(filename, L"in_snes.dll") ||
 				StrStrI(filename, L"in_snes.trb") ||
 				StrStrI(filename, L"in_snesamp.dll") ||
+				StrStrI(filename, L"in_url.dll") ||
 				StrStrI(filename, L"in_vgmstream.dll") ||
 				StrStrI(filename, L"in_wave.dll") ||
 				StrStrI(filename, L"in_wm.dll"))
@@ -918,10 +924,11 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 		// as pocessing video can cause some problems...
 		if (audioOnly)
 		{
-			LPCWSTR type_str = GetExtendedFileInfoW(szFn, L"type");
-			if (type_str && *type_str)
+			wchar_t buf[4] = { 0 };
+			if (GetExtendedFileInfoW(szFn, L"type", buf,
+									 ARRAYSIZE(buf)) && buf[0])
 	{
-				if (_wtoi(type_str) == 1)
+				if (_wtoi(buf) == 1)
 				{
 					return;
 				}
