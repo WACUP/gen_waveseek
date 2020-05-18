@@ -33,7 +33,7 @@
 #include <openssl/sha.h>
 #endif
 
-#define PLUGIN_VERSION "3.5.8"
+#define PLUGIN_VERSION "3.5.9"
 
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS
@@ -486,7 +486,11 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 				return NULL;
 			}
 
-			if (StrStrI(filename, L"in_cdda.dll") ||
+			// prime the plug-in just in-case it supports this
+			// & the plug-in author forgets to do it as needed
+			const int ver = ((in_mod->version & ~IN_UNICODE) & ~IN_INIT_RET);
+			if ((ver == 0x102) || // it's a wacup build so skip
+				StrStrI(filename, L"in_cdda.dll") ||
 				StrStrI(filename, L"in_flac.dll") ||
 				StrStrI(filename, L"in_midi.dll") ||
 				StrStrI(filename, L"in_mod.dll") ||
@@ -497,6 +501,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 				StrStrI(filename, L"in_snesamp.dll") ||
 				StrStrI(filename, L"in_url.dll") ||
 				StrStrI(filename, L"in_vgmstream.dll") ||
+				StrStrI(filename, L"in_vorbis.dll") ||
 				StrStrI(filename, L"in_wave.dll") ||
 				StrStrI(filename, L"in_wm.dll"))
 			{
@@ -898,6 +903,8 @@ BOOL GetFilenameHash(LPCWSTR filename, LPWSTR cacheFile)
 
 void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 {
+	if (szFn && *szFn)
+	{
 	if (StrStrI(szFilename, szFn) && bIsProcessing)
 	{
 		// if we're already processing and we're asked
@@ -918,7 +925,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 	nCueTracks = 0;
 
 	// make sure that it's valid and something we can process
-	if (szFn && *szFn && ((!PathIsURL(szFn) && PathFileExists(szFn)) || !_wcsnicmp(szFn, L"zip://", 6)))
+		if ((!PathIsURL(szFn) && PathFileExists(szFn)) || !_wcsnicmp(szFn, L"zip://", 6))
 	{
 		// if enabled then only process audio only files
 		// as pocessing video can cause some problems...
@@ -1016,6 +1023,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 			}
 		}
 	}
+	}
 
 	// if the tooltip is being shown then we need to try
 	// & update it so that it reflects the current view.
@@ -1038,7 +1046,7 @@ int GetPrivateProfileHex(LPCWSTR lpAppName, LPCWSTR lpKeyName, INT nDefault, LPC
 		return nDefault;
 	}
 
-	if (s && (*s == '#'))
+	if (*s == '#')
 	{
 		++s;
 }
