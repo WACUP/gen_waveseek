@@ -33,7 +33,7 @@
 #include <openssl/sha.h>
 #endif
 
-#define PLUGIN_VERSION "3.5.10"
+#define PLUGIN_VERSION "3.6"
 
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS

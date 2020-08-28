@@ -65,7 +65,12 @@ HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID embedWindowG
 
 void DestroyEmbeddedWindow(embedWindowState* embedWindow)
 {
-	if (!EqualRect(&initial[0], &embedWindow->r))
+	// unless we're closing as a classic skin then we'll
+	// skip saving the current window position otherwise
+	// we have the issue with windows being in the wrong
+	// places after modern -> exit -> modern -> classic
+	if (!embedWindow->wasabi_window &&
+		!EqualRect(&initial[0], &embedWindow->r))
 	{
 		SaveNativeIniInt(WINAMP_INI, INI_FILE_SECTION,
 						 L"PosX", embedWindow->r.left);
