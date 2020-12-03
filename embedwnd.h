@@ -29,7 +29,7 @@ BOOL EmbeddedWindowIsMinimizedMode(HWND embeddedWindow);
 // these functions are used to process any relevant menu or window messages which the
 // embedded window needs to detect inorder to work (especially betweeen instances)
 LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
-LRESULT HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, embedWindowState* embedWindow, BOOL preSubclass,
+void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, embedWindowState* embedWindow,
 												 HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 
 // shared variables with the embedwnd code this can be altered if you want to use

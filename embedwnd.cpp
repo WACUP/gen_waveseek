@@ -60,7 +60,7 @@ HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID embedWindowG
 	embedWindow->flags |= EMBED_FLAGS_NOWINDOWMENU;
 
 	// now we have set up the embedWindowState structure, we pass it to Winamp to create
-	return (HWND)SendMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)embedWindow, IPC_GET_EMBEDIF);
+	return plugin.createembed(embedWindow);
 }
 
 void DestroyEmbeddedWindow(embedWindowState* embedWindow)
@@ -115,8 +115,10 @@ void AddEmbeddedWindowToMenus(BOOL add, UINT menuId, LPWSTR menuString, BOOL set
 		DeleteMenu(main_menu, menuId, MF_BYCOMMAND);
 	}
 
+#ifdef IPC_ADJUST_OPTIONSMENUPOS
 	// this will adjust the menu position (there were bugs with this api but all is fine for 5.5+)
 	SendMessage(plugin.hwndParent, WM_WA_IPC, (add ? 1 : -1), IPC_ADJUST_OPTIONSMENUPOS);
+#endif
 
 	// this will add a menu item to the main window views menu
 	if (add)
@@ -138,8 +140,10 @@ void AddEmbeddedWindowToMenus(BOOL add, UINT menuId, LPWSTR menuString, BOOL set
 		DeleteMenu(windows_menu,menuId,MF_BYCOMMAND);
 	}
 
+#ifdef IPC_ADJUST_FFWINDOWSMENUPOS
 	// this will adjust the menu position (there were bugs with this api but all is fine for 5.5+)
 	SendMessage(plugin.hwndParent, WM_WA_IPC, (add ? 1 : -1), IPC_ADJUST_FFWINDOWSMENUPOS);
+#endif
 }
 
 void UpdateEmbeddedWindowsMenu(UINT menuId)
@@ -177,7 +181,7 @@ LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd,
 	if ((message == WM_SYSCOMMAND || message == WM_COMMAND) && LOWORD(wParam) == menuId)
 	{
 		self_update = TRUE;
-		ShowWindow(embedWnd, (IsWindowVisible(embedWnd) ? SW_HIDE : SW_SHOW));
+		ShowWindow(embedWnd, (IsWindowVisible(embedWnd) ? SW_HIDE : SW_SHOWNA));
 		visible = !visible;
 		UpdateEmbeddedWindowsMenu(menuId);
 		self_update = FALSE;
@@ -211,11 +215,9 @@ LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd,
 	return 0;
 }
 
-LRESULT HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, embedWindowState* embedWindow, BOOL preSubclass,
+void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, embedWindowState* embedWindow,
 												 HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-	if (preSubclass)
-	{
 		// these are done before the original window proceedure has been called to
 		// ensure we get the correct size of the window and for checking the menu
 		// item for the embedded window as applicable
@@ -224,11 +226,10 @@ LRESULT HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, emb
 			if (LOWORD(wParam) == menuId)
 		{
 			self_update = TRUE;
-			ShowWindow(embedWnd, (IsWindowVisible(embedWnd) ? SW_HIDE : SW_SHOW));
+			ShowWindow(embedWnd, (IsWindowVisible(embedWnd) ? SW_HIDE : SW_SHOWNA));
 			visible = !visible;
 			UpdateEmbeddedWindowsMenu(menuId);
 			self_update = FALSE;
-			return 1;
 		}
 			else if (LOWORD(wParam) == WINAMP_REFRESHSKIN)
 		{
@@ -253,14 +254,10 @@ LRESULT HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, emb
 					UpdateEmbeddedWindowsMenu(menuId);
 				}
 			}
-		}
-	}
-	else
+		else if ((lParam == IPC_IS_MINIMISED_OR_RESTORED) && !wParam)
 	{
 		// this is used to cope with Winamp being started minimised and will then
 		// re-show the example window when Winamp is being restored to visibility
-		if ((message == WM_SIZE) && (wParam == SIZE_RESTORED))
-		{
 			if (EmbeddedWindowIsMinimizedMode(embedWnd))
 			{
 				ShowWindow(embedWnd, (visible ? SW_SHOWNA : SW_HIDE));
@@ -268,6 +265,4 @@ LRESULT HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, emb
 			}
 		}
 	}
-
-	return 0;
 }

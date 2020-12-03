@@ -33,7 +33,7 @@
 #include <openssl/sha.h>
 #endif
 
-#define PLUGIN_VERSION "3.6"
+#define PLUGIN_VERSION "3.6.1"
 
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS
@@ -108,8 +108,7 @@ wchar_t
 		szUnavailable[128] = {0},
 		szBadPlugin[128] = {0},
 		szStreamsNotSupported[128] = {0},
-		szLegacy[128] = {0},
-		pluginTitleW[256] = {0};
+		szLegacy[128] = {0};
 
 In_Module * pModule = NULL;
 int nLengthInMS = 0, no_uninstall = 1, delay_load = -1;
@@ -1028,7 +1027,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 	// & update it so that it reflects the current view.
 	if (!hideTooltip && IsWindowVisible(hWndToolTip))
 	{
-		const int lengthInMS = (bIsCurrent ? SendMessage(plugin.hwndParent, WM_WA_IPC, 2, IPC_GETOUTPUTTIME) : GetFileLength());
+		const int lengthInMS = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() : GetFileLength());
 		POINT pt = {0};
 		GetCursorPos(&pt);
 		ScreenToClient(hWndInner, &pt);
@@ -1163,8 +1162,8 @@ void ProcessSkinChange(BOOL skip_refresh = FALSE)
 
 void PaintWaveform(HDC hdc, RECT rc)
 {
-	const int nSongPos = (bIsCurrent ? SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETOUTPUTTIME) : 0),
-			  nSongLen = (bIsCurrent ? SendMessage(plugin.hwndParent, WM_WA_IPC, 2, IPC_GETOUTPUTTIME) : GetFileLength()),
+	const int nSongPos = (bIsCurrent ? GetCurrentTrackPos() : 0),
+			  nSongLen = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() : GetFileLength()),
 			  nBufPos = (nSongLen != -1 ? MulDiv(nSongPos, SAMPLE_BUFFER_SIZE, nSongLen) : 0),
 			  h = (rc.bottom - rc.top);
 	int w = (rc.right - rc.left);
@@ -1560,7 +1559,8 @@ bool ProcessMenuResult(UINT command, HWND parent)
 			wchar_t message[512] = {0};
 			StringCchPrintf(message, ARRAYSIZE(message), WASABI_API_LNGSTRINGW(IDS_ABOUT_STRING), TEXT(__DATE__));
 			//MessageBox(plugin.hwndParent, message, pluginTitleW, 0);
-			AboutMessageBox(plugin.hwndParent, message, pluginTitleW);
+			AboutMessageBox(plugin.hwndParent, message,
+							(LPWSTR)plugin.description);
 			break;
 		}
 		default:
@@ -1717,9 +1717,10 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			// happened as a coincidence of the mesages received
 			if (bIsCurrent)
 			{
-				if (!SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_ISPLAYING))
+				if (!GetPlayingState())
 				{
-					SendMessage(plugin.hwndParent, WM_COMMAND, MAKEWPARAM(WINAMP_BUTTON2, 0), 0);
+					PostMessage(plugin.hwndParent, WM_COMMAND,
+								MAKEWPARAM(WINAMP_BUTTON2, 0), 0);
 					bForceJump = true;
 				}
 				// we'll fall through to WM_LBUTTONUP the handling
@@ -1734,8 +1735,8 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 					if (sel != -1)
 					{
 						// update the position and then fake hitting play
-						SendMessage(plugin.hwndParent, WM_WA_IPC, sel, IPC_SETPLAYLISTPOS);
-						PostMessage(plugin.hwndParent, WM_COMMAND, MAKEWPARAM(WINAMP_BUTTON2, 0), 0);
+						SendMessage(plugin.hwndParent, WM_WA_IPC,
+									sel, IPC_SETANDPLAYLISTPOS);
 					}
 				}
 				break;
@@ -1745,7 +1746,7 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		{
 			if (bIsCurrent)
 			{
-				const int nSongLen = (int)SendMessage(plugin.hwndParent, WM_WA_IPC, 2, IPC_GETOUTPUTTIME);
+				const int nSongLen = GetCurrentTrackLengthMilliSeconds();
 				if (nSongLen != -1 || bForceJump)
 				{
 					RECT rc = {0};
@@ -1786,7 +1787,7 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 				xOldPos = xPos;
 				yOldPos = yPos;
 
-				const int lengthInMS = (bIsCurrent ? SendMessage(plugin.hwndParent, WM_WA_IPC, 2, IPC_GETOUTPUTTIME) : GetFileLength());
+				const int lengthInMS = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() : GetFileLength());
 				if (lengthInMS > 0)
 				{
 					// ensures we'll get a WM_MOUSELEAVE 
@@ -1813,12 +1814,19 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			SendMessage(hWndToolTip, TTM_TRACKACTIVATE, FALSE, (LPARAM)&ti);
 			break;
 		}
+		case WM_DESTROY:
+		{
+			if (WASABI_API_APP != NULL)
+			{
+				WASABI_API_APP->app_removeAccelerators(hWnd);
+			}
+			break;
+		}
 	}
 	return 0;
 }
 
-LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
-								   UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+void MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const LPARAM lParam)
 {
 	if (uMsg == WM_WA_IPC)
 	{
@@ -1901,7 +1909,7 @@ LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 				// we can use IPC_REGISTER_LOWORD_COMMAND to get a unique id for the menu items we
 				// will be adding into Winamp's menus. using this api will allocate an id which can
 				// vary between Winamp revisions as it moves depending on the resources in Winamp.
-				WINAMP_WAVEFORM_SEEK_MENUID = SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_REGISTER_LOWORD_COMMAND);
+				WINAMP_WAVEFORM_SEEK_MENUID = RegisterCommandID(0);
 
 				// then we show the embedded window which will cause the child window to be
 				// sized into the frame without having to do any thing ourselves. also this will
@@ -1955,7 +1963,7 @@ LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 					// only show on startup if under a classic skin and was set
 					if (visible)
 					{
-						ShowWindow(hWndWaveseek, SW_SHOW);
+						ShowWindow(hWndWaveseek, SW_SHOWNA);
 					}
 				}
 			}
@@ -1973,17 +1981,7 @@ LRESULT CALLBACK WinampHookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 	// proceedure of the subclass can process it. with multiple windows then this
 	// would need to be duplicated for the number of embedded windows your handling
 	HandleEmbeddedWindowWinampWindowMessages(hWndWaveseek, WINAMP_WAVEFORM_SEEK_MENUID,
-											 &embed, TRUE, hWnd, uMsg, wParam, lParam);
-
-	LRESULT ret = DefSubclass(hWnd, uMsg, wParam, lParam);
-
-	// this will handle the message needed to be caught after the original window
-	// proceedure of the subclass can process it. with multiple windows then this
-	// would need to be duplicated for the number of embedded windows your handling
-	HandleEmbeddedWindowWinampWindowMessages(hWndWaveseek, WINAMP_WAVEFORM_SEEK_MENUID,
-											 &embed, FALSE, hWnd, uMsg, wParam, lParam);
-
-	return ret;
+											 &embed, hWnd, uMsg, wParam, lParam);
 }
 
 int PluginInit(void) 
@@ -2008,10 +2006,9 @@ int PluginInit(void)
 		// TODO add to lang.h
 		WASABI_API_START_LANG(plugin.hDllInstance, embed_guid);
 
+		wchar_t	pluginTitleW[256] = { 0 };
 		StringCchPrintf(pluginTitleW, ARRAYSIZE(pluginTitleW), WASABI_API_LNGSTRINGW(IDS_PLUGIN_NAME), TEXT(PLUGIN_VERSION));
-		plugin.description = (char*)pluginTitleW;
-
-		Subclass(plugin.hwndParent, WinampHookWndProc);
+		plugin.description = (char*)_wcsdup(pluginTitleW);
 
 		// restore / process the current file so we're showing something on load
 		// but we delay it a bit until Winamp is in a better state especially if
@@ -2031,7 +2028,7 @@ void PluginConfig()
 	RECT r = {0};
 
 	MENUITEMINFO i = {sizeof(i), MIIM_ID | MIIM_STATE | MIIM_TYPE, MFT_STRING, MFS_UNCHECKED | MFS_DISABLED, 1};
-	i.dwTypeData = pluginTitleW;
+	i.dwTypeData = (LPWSTR)plugin.description;
 	InsertMenuItem(popup, 0, TRUE, &i);
 
 	// as we are re-using the same menu resource, we
@@ -2089,16 +2086,17 @@ void PluginQuit()
 	ServiceRelease(WASABI_API_SVC, WASABI_API_LNG, languageApiGUID);
 	ServiceRelease(WASABI_API_SVC, WASABI_API_APP, applicationApiServiceGuid);
 #endif
-
-	UnSubclass(plugin.hwndParent, WinampHookWndProc);
 }
+
+void MessageProc(HWND hWnd, const UINT uMsg, const
+				 WPARAM wParam, const LPARAM lParam);
 
 winampGeneralPurposePlugin plugin =
 {
 	GPPHDR_VER_WACUP,
 	(char *)L"Waveform Seeker v" TEXT(PLUGIN_VERSION),
 	PluginInit, PluginConfig, PluginQuit,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+	GEN_INIT_WACUP_HAS_MESSAGES
 };
 
 extern "C" __declspec(dllexport) winampGeneralPurposePlugin * winampGetGeneralPurposePlugin()
@@ -2110,7 +2108,7 @@ extern "C" __declspec(dllexport) int winampUninstallPlugin(HINSTANCE hDllInst, H
 {
 	// prompt to remove our settings with default as no (just incase)
 	if (MessageBox(hwndDlg, WASABI_API_LNGSTRINGW(IDS_DO_YOU_ALSO_WANT_TO_REMOVE_SETTINGS),
-				   pluginTitleW, MB_YESNO | MB_DEFBUTTON2) == IDYES)
+				   (LPWSTR)plugin.description, MB_YESNO | MB_DEFBUTTON2) == IDYES)
 	{
 		SaveNativeIniString(WINAMP_INI, L"Waveseek", 0, 0);
 		no_uninstall = 0;
