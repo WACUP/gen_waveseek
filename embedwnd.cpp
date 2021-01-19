@@ -99,7 +99,7 @@ void AddEmbeddedWindowToMenus(BOOL add, UINT menuId, LPWSTR menuString, BOOL set
 	// this will add a menu item to the main right-click menu
 	if (add)
 	{
-		main_menu = (HMENU)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GET_HMENU);
+		main_menu = GetNativeMenu((WPARAM)0);
 
 		int prior_item = GetMenuItemID(main_menu, 9);
 		if (prior_item <= 0)
@@ -123,7 +123,7 @@ void AddEmbeddedWindowToMenus(BOOL add, UINT menuId, LPWSTR menuString, BOOL set
 	// this will add a menu item to the main window views menu
 	if (add)
 	{
-		windows_menu = (HMENU)SendMessage(plugin.hwndParent, WM_WA_IPC, 4, IPC_GET_HMENU);
+		windows_menu = GetNativeMenu((WPARAM)4);
 
 		int prior_item = GetMenuItemID(windows_menu, 3);
 		if (prior_item <= 0)
@@ -181,7 +181,7 @@ LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd,
 	if ((message == WM_SYSCOMMAND || message == WM_COMMAND) && LOWORD(wParam) == menuId)
 	{
 		self_update = TRUE;
-		ShowWindow(embedWnd, (IsWindowVisible(embedWnd) ? SW_HIDE : SW_SHOWNA));
+		PostMessage(embedWnd, WM_USER + (!IsWindowVisible(embedWnd) ? 102 : 105), 0, 0);
 		visible = !visible;
 		UpdateEmbeddedWindowsMenu(menuId);
 		self_update = FALSE;
@@ -190,7 +190,7 @@ LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd,
 	// this is sent to the child window of the frame when the 'close' button is clicked
 	else if (message == WM_CLOSE)
 	{
-		ShowWindow(embedWnd, SW_HIDE);
+		PostMessage(embedWnd, WM_USER + 105, 0, 0);
 		visible = 0;
 		UpdateEmbeddedWindowsMenu(menuId);
 		PostMessage(plugin.hwndParent, WM_COMMAND, MAKEWPARAM(WINAMP_NEXT_WINDOW, 0), 0);
@@ -216,22 +216,22 @@ LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd,
 }
 
 void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, embedWindowState* embedWindow,
-												 HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+											  HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-		// these are done before the original window proceedure has been called to
-		// ensure we get the correct size of the window and for checking the menu
-		// item for the embedded window as applicable
-		if (message == WM_SYSCOMMAND || message == WM_COMMAND)
-		{
-			if (LOWORD(wParam) == menuId)
+	// these are done before the original window proceedure has been called to
+	// ensure we get the correct size of the window and for checking the menu
+	// item for the embedded window as applicable
+	if (message == WM_SYSCOMMAND || message == WM_COMMAND)
+	{
+		if (LOWORD(wParam) == menuId)
 		{
 			self_update = TRUE;
-			ShowWindow(embedWnd, (IsWindowVisible(embedWnd) ? SW_HIDE : SW_SHOWNA));
+			PostMessage(embedWnd, WM_USER + (!IsWindowVisible(embedWnd) ? 102 : 105), 0, 0);
 			visible = !visible;
 			UpdateEmbeddedWindowsMenu(menuId);
 			self_update = FALSE;
 		}
-			else if (LOWORD(wParam) == WINAMP_REFRESHSKIN)
+		else if (LOWORD(wParam) == WINAMP_REFRESHSKIN)
 		{
 			if (!GetParent(embedWnd))
 			{
@@ -239,28 +239,28 @@ void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, embedW
 				height = (embedWindow->r.bottom - embedWindow->r.top);
 			}
 		}
-		}
-		else if (message == WM_WA_IPC)
-		{
-			if (lParam == IPC_SKIN_CHANGED_NEW)
-			{
-				PostMessage(GetWindow(embedWnd, GW_CHILD), WM_USER + 0x202, 0, 0);
-			}
-			else if ((lParam == IPC_CB_ONSHOWWND) || (lParam == IPC_CB_ONHIDEWND))
-			{
-				if (((HWND)wParam == embedWnd) && !self_update)
-				{
-					visible = (lParam == IPC_CB_ONSHOWWND);
-					UpdateEmbeddedWindowsMenu(menuId);
-				}
-			}
-		else if ((lParam == IPC_IS_MINIMISED_OR_RESTORED) && !wParam)
+	}
+	else if (message == WM_WA_IPC)
 	{
-		// this is used to cope with Winamp being started minimised and will then
-		// re-show the example window when Winamp is being restored to visibility
+		if (lParam == IPC_SKIN_CHANGED_NEW)
+		{
+			PostMessage(GetWindow(embedWnd, GW_CHILD), WM_USER + 0x202, 0, 0);
+		}
+		else if ((lParam == IPC_CB_ONSHOWWND) || (lParam == IPC_CB_ONHIDEWND))
+		{
+			if (((HWND)wParam == embedWnd) && !self_update)
+			{
+				visible = (lParam == IPC_CB_ONSHOWWND);
+				UpdateEmbeddedWindowsMenu(menuId);
+			}
+		}
+		else if ((lParam == IPC_IS_MINIMISED_OR_RESTORED) && !wParam)
+		{
+			// this is used to cope with Winamp being started minimised and will then
+			// re-show the example window when Winamp is being restored to visibility
 			if (EmbeddedWindowIsMinimizedMode(embedWnd))
 			{
-				ShowWindow(embedWnd, (visible ? SW_SHOWNA : SW_HIDE));
+				PostMessage(embedWnd, WM_USER + (visible ? 102 : 105), 0, 0);
 				SetEmbeddedWindowMinimizedMode(embedWnd, FALSE);
 			}
 		}

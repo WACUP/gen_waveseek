@@ -30,7 +30,7 @@ BOOL EmbeddedWindowIsMinimizedMode(HWND embeddedWindow);
 // embedded window needs to detect inorder to work (especially betweeen instances)
 LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, embedWindowState* embedWindow,
-												 HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
+											  HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 
 // shared variables with the embedwnd code this can be altered if you want to use
 // different variables or means but is done like this to simplify this example
