@@ -503,7 +503,8 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 				StrStrI(filename, L"in_vgmstream.dll") ||
 				StrStrI(filename, L"in_vorbis.dll") ||
 				StrStrI(filename, L"in_wave.dll") ||
-				StrStrI(filename, L"in_wm.dll"))
+				StrStrI(filename, L"in_wm.dll") ||
+				StrStrI(filename, L"in_yansf.dll"))
 			{
 				// these native / nullsoft plug-ins really
 				// really really doesn't like to work as a

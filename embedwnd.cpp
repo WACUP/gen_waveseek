@@ -22,8 +22,8 @@ HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID embedWindowG
 	// position of the embedded window when it is created saving addtional handling
 	//
 	// how you store the settings is down to you, this example uses winamp.ini for ease
-	embedWindow->r.left = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"PosX", 301);
-	embedWindow->r.top = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"PosY", 377);
+	embedWindow->r.left = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"PosX", 275);
+	embedWindow->r.top = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"PosY", 348);
 	
 	//TODO map from the old values?
 	int right = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"wnd_right", -1),
