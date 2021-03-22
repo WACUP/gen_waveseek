@@ -34,7 +34,7 @@
 #include <openssl/sha.h>
 #endif
 
-#define PLUGIN_VERSION "3.6.6"
+#define PLUGIN_VERSION "3.6.7"
 
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS
@@ -902,6 +902,29 @@ BOOL GetFilenameHash(LPCWSTR filename, LPWSTR cacheFile)
 	return FALSE;
 }
 
+BOOL AllowedFile(const wchar_t * szFn)
+{
+	LPCWSTR extension = PathFindExtension(szFn);
+	if (extension && *extension == L'.')
+	{
+		++extension; // to ignore having to mess with the . with all compares
+		if (extension && *extension)
+		{
+			// for extensions that we know are going to trigger plug-ins that are
+			// known to not be thread safe then we'll crudely add them here so as
+			// avoid processing until (hopefully) those plug-ins can be improved!
+			if (!_wcsicmp(extension, L"2sf") || !_wcsicmp(extension, L"mini2sf") ||
+				!_wcsicmp(extension, L"gsf") || !_wcsicmp(extension, L"minigsf") ||
+				!_wcsicmp(extension, L"ncsf") || !_wcsicmp(extension, L"minincsf") ||
+				!_wcsicmp(extension, L"snsf") || !_wcsicmp(extension, L"minisnsf"))
+			{
+				return FALSE;
+			}
+		}
+	}
+	return TRUE;
+}
+
 void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 {
 	if (szFn && *szFn)
@@ -926,7 +949,8 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 		nCueTracks = 0;
 
 		// make sure that it's valid and something we can process
-		if ((!PathIsURL(szFn) && PathFileExists(szFn)) || !_wcsnicmp(szFn, L"zip://", 6))
+		if ((!PathIsURL(szFn) && PathFileExists(szFn) && AllowedFile(szFn)) ||
+			(!_wcsnicmp(szFn, L"zip://", 6) && AllowedFile(szFn)))
 		{
 			// if enabled then only process audio only files
 			// as pocessing video can cause some problems...
