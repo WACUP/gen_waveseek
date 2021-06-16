@@ -34,7 +34,7 @@
 #include <openssl/sha.h>
 #endif
 
-#define PLUGIN_VERSION "3.6.7"
+#define PLUGIN_VERSION "3.6.8"
 
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS
@@ -137,10 +137,10 @@ void GetFilePaths()
 		// find the winamp.ini for the Winamp install being used
 #ifdef WACUP_BUILD
 		//ini_file = (wchar_t *)GetPaths()->winamp_ini_file;
-		wcsncpy(szWaveCacheDir, GetPaths()->settings_dir, ARRAYSIZE(szWaveCacheDir) - 1);
+		(void)StringCchCopy(szWaveCacheDir, ARRAYSIZE(szWaveCacheDir), GetPaths()->settings_dir);
 #else
 		ini_file = (wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETINIFILEW);
-		wcsncpy(szWaveCacheDir, (wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETINIDIRECTORYW), ARRAYSIZE(szWaveCacheDir) - 1);
+		(void)StringCchCopy(szWaveCacheDir, ARRAYSIZE(szWaveCacheDir), (wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETINIDIRECTORYW));
 #endif
 
 		// make the cache folder in the user's settings folder e.g. %APPDATA%\Winamp\Plugins\wavecache
@@ -270,8 +270,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	QueryPerformanceCounter(&starttime);
 #endif
 
-	wchar_t szFn[MAX_PATH] = {0};
-	wcsncpy(szFn, szFilename, ARRAYSIZE(szFn) - 1);
+	wchar_t szFn[MAX_PATH] = { 0 };
+	(void)StringCchCopy(szFn, ARRAYSIZE(szFn), szFilename);
 
 	ifc_audiostream *decoder = (ifc_audiostream *)lp;
 	if (decoder)
@@ -282,7 +282,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		unsigned short pThreadSampleBuffer[SAMPLE_BUFFER_SIZE] = {0};
 
 		SecureZeroMemory(pSampleBuffer, SAMPLE_BUFFER_SIZE * sizeof(unsigned short));
-		wcsncpy(szThreadWaveCacheFile, szWaveCacheFile, ARRAYSIZE(szThreadWaveCacheFile) - 1);
+		(void)StringCchCopy(szThreadWaveCacheFile, ARRAYSIZE(szThreadWaveCacheFile), szWaveCacheFile);
 
 		// TODO consider changing over to the metadata api
 		wchar_t buf[16] = { 0 };
@@ -442,8 +442,8 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 		parameters.bitsPerSample = 24;
 		parameters.sampleRate = 44100;
 
-		wchar_t fn[MAX_PATH] = {0};
-		wcsncpy(fn, szFn, ARRAYSIZE(fn) - 1);
+		wchar_t fn[MAX_PATH] = { 0 };
+		(void)StringCchCopy(fn, ARRAYSIZE(fn), szFn);
 		ifc_audiostream *decoder = (WASABI_API_DECODEFILE2 ? WASABI_API_DECODEFILE2->OpenAudioBackground(fn, &parameters) : NULL);
 		if (decoder)
 		{
@@ -830,9 +830,9 @@ LPWSTR GetTooltipText(HWND hWnd, int pos, int lengthInMS)
 		}
 	}
 
-	wchar_t position[32] = {0}, total[32] = {0};
-	FormatTimeString(position, ARRAYSIZE(position), sec);
-	FormatTimeString(total, ARRAYSIZE(total), total_sec);
+	wchar_t position[32] = { 0 }, total[32] = { 0 };
+	plugin.language->FormattedTimeString(position, ARRAYSIZE(position), sec, 0);
+	plugin.language->FormattedTimeString(total, ARRAYSIZE(total), total_sec, 0);
 
 	if (nTrack >= 0)
 	{
@@ -944,7 +944,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 		bIsLoaded = bUnsupported = false;
 		bIsCurrent = !_wcsicmp(szFn, GetPlayingFilename(0));
 
-		wcsncpy(szFilename, szFn, ARRAYSIZE(szFilename) - 1);
+		(void)StringCchCopy(szFilename, ARRAYSIZE(szFilename), szFn);
 
 		nCueTracks = 0;
 
@@ -967,8 +967,8 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 				}
 			}
 
-			wchar_t szCue[MAX_PATH] = {0};
-			wcsncpy(szCue, szFn, ARRAYSIZE(szCue) - 1);
+			wchar_t szCue[MAX_PATH] = { 0 };
+			(void)StringCchCopy(szCue, ARRAYSIZE(szCue), szFn);
 			PathRenameExtension(szCue, L".cue");
 
 			if (PathFileExists(szCue))
@@ -1122,7 +1122,7 @@ void ProcessSkinChange(BOOL skip_refresh = FALSE)
 	// get the current skin and use that as a
 	// means to control the colouring used
 	wchar_t szBuffer[MAX_PATH] = { 0 };
-	GetCurrentSkin(szBuffer);
+	GetCurrentSkin(szBuffer, ARRAYSIZE(szBuffer));
 
 	if (szBuffer[0])
 	{
@@ -1797,7 +1797,7 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 					// if not forcing a jump then just send as-is
 					if (!bForceJump)
 					{
-						SendMessage(plugin.hwndParent, WM_WA_IPC, ms, IPC_JUMPTOTIME);
+						JumpToTime(ms);
 					}
 					else
 					{
@@ -1868,7 +1868,7 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 	return 0;
 }
 
-void MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const LPARAM lParam)
+void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const LPARAM lParam)
 {
 	if (uMsg == WM_WA_IPC)
 	{
@@ -2136,8 +2136,8 @@ void PluginQuit()
 #endif
 }
 
-void MessageProc(HWND hWnd, const UINT uMsg, const
-				 WPARAM wParam, const LPARAM lParam);
+void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const
+						 WPARAM wParam, const LPARAM lParam);
 
 winampGeneralPurposePlugin plugin =
 {
