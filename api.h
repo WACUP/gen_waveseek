@@ -19,4 +19,6 @@ extern api_decodefile2 *decodeFile2;
 #include <loader/hook/api_skin.h>
 #define WASABI_API_SKIN skinApi
 
+#include <Agave/Metadata/api_metadata2.h>
+
 #endif

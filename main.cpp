@@ -34,7 +34,8 @@
 #include <openssl/sha.h>
 #endif
 
-#define PLUGIN_VERSION "3.6.8"
+
+#define PLUGIN_VERSION "3.7"
 
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS
@@ -62,8 +63,8 @@ static const GUID embed_guid =
 
 HWND hWndWaveseek = NULL, hWndToolTip = NULL, hWndInner = NULL;
 WNDPROC oldPlaylistWndProc = NULL;
-embedWindowState embed = {0};
-TOOLINFO ti = {0};
+embedWindowState embed = { 0 };
+TOOLINFO ti = { 0 };
 int on_click = 0, clickTrack = 1,
 	showCuePoints = 0, legacy = 0,
 	audioOnly = 1, hideTooltip = 0,
@@ -72,6 +73,7 @@ int on_click = 0, clickTrack = 1,
 UINT WINAMP_WAVEFORM_SEEK_MENUID = 0xa1bb;
 
 api_service *WASABI_API_SVC = NULL;
+api_metadata2 *WASABI_API_METADATA = 0;
 api_decodefile2 *WASABI_API_DECODEFILE2 = NULL;
 api_application *WASABI_API_APP = NULL;
 api_language *WASABI_API_LNG = NULL;
@@ -98,18 +100,18 @@ typedef In_Module *(*PluginGetter)();
 #define TIMER_ID 31337
 #define TIMER_FREQ 125	// ~8fps
 
-wchar_t 
+wchar_t
 #ifndef WACUP_BUILD
 		*szDLLPath = 0, *ini_file = 0,
 #endif
-		szFilename[MAX_PATH] = {0},
-		szWaveCacheDir[MAX_PATH] = {0},
-		szWaveCacheFile[MAX_PATH] = {0},
-		szTempDLLDestination[MAX_PATH] = {0},
-		szUnavailable[128] = {0},
-		szBadPlugin[128] = {0},
-		szStreamsNotSupported[128] = {0},
-		szLegacy[128] = {0};
+		szFilename[MAX_PATH] = { 0 },
+		szWaveCacheDir[MAX_PATH] = { 0 },
+		szWaveCacheFile[MAX_PATH] = { 0 },
+		szTempDLLDestination[MAX_PATH] = { 0 },
+		szUnavailable[128] = { 0 },
+		szBadPlugin[128] = { 0 },
+		szStreamsNotSupported[128] = { 0 },
+		szLegacy[128] = { 0 };
 
 In_Module * pModule = NULL;
 int nLengthInMS = 0, no_uninstall = 1, delay_load = -1;
@@ -159,7 +161,7 @@ void GetFilePaths()
 
 int GetFileInfo(const bool unicode, char* szFn, char szFile[MAX_PATH])
 {
-	wchar_t szTitle[GETFILEINFO_TITLE_LENGTH] = {0};
+	wchar_t szTitle[GETFILEINFO_TITLE_LENGTH] = { 0 };
 	int lengthInMS = -1;
 	if (!unicode)
 	{
@@ -261,52 +263,65 @@ void ClearProcessingHandles()
 	processing_list.clear();
 }
 
-AudioParameters parameters;
+typedef struct
+{
+	LPCWSTR filename;
+	ifc_audiostream *decoder;
+	AudioParameters parameters;
+} CalcThreadParams;
+
 DWORD WINAPI CalcWaveformThread(LPVOID lp)
 {
 //#define USE_PROFILING
 #ifdef USE_PROFILING
-	LARGE_INTEGER starttime = {0}, endtime = {0};
+	LARGE_INTEGER starttime = { 0 }, endtime = { 0 };
 	QueryPerformanceCounter(&starttime);
 #endif
 
-	wchar_t szFn[MAX_PATH] = { 0 };
-	(void)StringCchCopy(szFn, ARRAYSIZE(szFn), szFilename);
-
-	ifc_audiostream *decoder = (ifc_audiostream *)lp;
-	if (decoder)
+	CalcThreadParams *item = (CalcThreadParams *)lp;
+	if (item->decoder)
 	{
-		wchar_t szThreadWaveCacheFile[MAX_PATH] = {0};
+		wchar_t szThreadWaveCacheFile[MAX_PATH] = { 0 };
 		unsigned long nAmplitude = 0, nSampleCount = 0;
 		unsigned int nFramePerWindow = 0, nBufferPointer = 0;
-		unsigned short pThreadSampleBuffer[SAMPLE_BUFFER_SIZE] = {0};
+		unsigned short pThreadSampleBuffer[SAMPLE_BUFFER_SIZE] = { 0 };
 
 		SecureZeroMemory(pSampleBuffer, SAMPLE_BUFFER_SIZE * sizeof(unsigned short));
 		(void)StringCchCopy(szThreadWaveCacheFile, ARRAYSIZE(szThreadWaveCacheFile), szWaveCacheFile);
 
-		// TODO consider changing over to the metadata api
+		// there's been a number of cases where the metadata
+		// query is going to block with other requests so it
+		// is simpler to add a bit of a wait for now to have
+		// this be more reliable in rendering a new file...
+		Sleep(20);
+
 		wchar_t buf[16] = { 0 };
-		if (GetExtendedFileInfoW(szFn, L"length", buf,
-								 ARRAYSIZE(buf)) && buf[0])
+		if (WASABI_API_METADATA != NULL)
+		{
+			void *token = NULL;
+			WASABI_API_METADATA->GetExtendedFileInfo(item->filename, L"length", buf, ARRAYSIZE(buf), &token);
+			WASABI_API_METADATA->FreeExtendedFileInfoToken(&token);
+		}
+
+		if (buf[0])
 		{
 			const int lengthMS = _wtoi(buf);
 			if (lengthMS > 0)
 			{
-				nFramePerWindow = MulDiv(lengthMS, parameters.sampleRate, SAMPLE_BUFFER_SIZE * 1000) + 1;
+				nFramePerWindow = MulDiv(lengthMS, item->parameters.sampleRate, SAMPLE_BUFFER_SIZE * 1000) + 1;
 			}
 		}
 		else
 		{
 			if (WASABI_API_DECODEFILE2)
 			{
-				WASABI_API_DECODEFILE2->CloseAudio(decoder);
+				WASABI_API_DECODEFILE2->CloseAudio(item->decoder);
 			}
-
 			goto abort;
 		}
 
-		const int padded_bits = ((parameters.bitsPerSample + 7) & (~7)) / 8;
-		const size_t buffer_size = (1152 * parameters.channels * padded_bits);
+		const int padded_bits = ((item->parameters.bitsPerSample + 7) & (~7)) / 8;
+		const size_t buffer_size = (1152 * item->parameters.channels * padded_bits);
 		char *data = (char *)calloc(buffer_size, sizeof(char));
 		if (!data)
 		{
@@ -316,35 +331,37 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		while (!kill_threads)
 		{
 			int error = 0;
-			const size_t bytesRead = decoder->ReadAudio((void *)data, buffer_size, &kill_threads, &error);
+			const size_t bytesRead = item->decoder->ReadAudio((void *)data, buffer_size, &kill_threads, &error);
 			if (error || kill_threads)
 			{
 				break;
 			}
 
 			const size_t samples = (bytesRead ? (bytesRead / padded_bits) : 0);
+			// cppcheck-suppress knownConditionTrueFalse
 			if (!samples || kill_threads)
 			{
 				break;
 			}
 
+			// cppcheck-suppress knownConditionTrueFalse
 			if ((nFramePerWindow == 0) || kill_threads)
 			{
 				break;
 			}
 
-			if (parameters.bitsPerSample == 16)
+			if (item->parameters.bitsPerSample == 16)
 			{
 				const short *p = (short *)data;
 				for (int i = 0; i < (bytesRead / 2) && !kill_threads; i++)
 				{
 					const unsigned int nSample = abs(*(p++));
-					nAmplitude = AddThreadSample(szFn, &pThreadSampleBuffer[0], nSample,
-												 nFramePerWindow, parameters.channels,
+					nAmplitude = AddThreadSample(item->filename, &pThreadSampleBuffer[0], nSample,
+												 nFramePerWindow, item->parameters.channels,
 												 nAmplitude, &nSampleCount, &nBufferPointer);
 				}
 			}
-			else if (parameters.bitsPerSample == 24)
+			else if (item->parameters.bitsPerSample == 24)
 			{
 				const char *p = (char *)data;
 				for (int i = 0; i < (bytesRead / 3) && !kill_threads; i++)
@@ -353,8 +370,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 													 ((0xFF & *(p + 1)) << 16) |
 													 ((0xFF & *(p)) << 8)) >> 16);
 					p += 3;
-					nAmplitude = AddThreadSample(szFn, &pThreadSampleBuffer[0], nSample,
-												 nFramePerWindow, parameters.channels,
+					nAmplitude = AddThreadSample(item->filename, &pThreadSampleBuffer[0], nSample,
+												 nFramePerWindow, item->parameters.channels,
 												 nAmplitude, &nSampleCount, &nBufferPointer);
 				}
 			}
@@ -371,7 +388,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 
 		if (WASABI_API_DECODEFILE2)
 		{
-			WASABI_API_DECODEFILE2->CloseAudio(decoder);
+			WASABI_API_DECODEFILE2->CloseAudio(item->decoder);
 		}
 
 		if (!kill_threads)
@@ -382,7 +399,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 			// current playlist item (playing / selected)
 			// then we will just copy over the buffer so
 			// that we don't need to do more processing.
-			if (StrStrI(szFilename, szFn))
+			if (StrStrI(szFilename, item->filename))
 			{
 				memcpy(&pSampleBuffer, &pThreadSampleBuffer, SAMPLE_BUFFER_SIZE * sizeof(unsigned short));
 			}
@@ -398,7 +415,7 @@ abort:
 			// found it so no need to re-add
 			// as that's just going to cause
 			// more processing / duplication
-			if (StrStrI(szFn, (*itr).first.c_str()))
+			if (StrStrI(item->filename, (*itr).first.c_str()))
 			{
 				CloseHandle((*itr).second);
 				processing_list.erase(itr);
@@ -418,12 +435,13 @@ abort:
 	const float ms = ((endtime.QuadPart - starttime.QuadPart) * 1000.0f / PerfFreq().QuadPart);
 	if (ms > /*0/*/0.10f/**/)
 	{
-		wchar_t profile[128] = {0};
+		wchar_t profile[128] = { 0 };
 		StringCchPrintf(profile, ARRAYSIZE(profile), L"%.3fms", ms);
 		MessageBox(plugin.hwndParent, profile, 0, 0);
 	}
 #endif
-
+	free((LPVOID)item->filename);
+	free((LPVOID)item);
 	return 0;
 }
 
@@ -437,18 +455,17 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 	// popular formats (as long as the input plug-in has support for it)
 	if (WASABI_API_DECODEFILE2 && WASABI_API_DECODEFILE2->DecoderExists(szFn))
 	{
-		parameters.flags = AUDIOPARAMETERS_MAXCHANNELS | AUDIOPARAMETERS_MAXSAMPLERATE | AUDIOPARAMETERS_NO_RESAMPLE;
-		parameters.channels = 2;
-		parameters.bitsPerSample = 24;
-		parameters.sampleRate = 44100;
-
-		wchar_t fn[MAX_PATH] = { 0 };
-		(void)StringCchCopy(fn, ARRAYSIZE(fn), szFn);
-		ifc_audiostream *decoder = (WASABI_API_DECODEFILE2 ? WASABI_API_DECODEFILE2->OpenAudioBackground(fn, &parameters) : NULL);
-		if (decoder)
+		CalcThreadParams *item = (CalcThreadParams *)calloc(1, sizeof(CalcThreadParams));
+		item->parameters.flags = AUDIOPARAMETERS_MAXCHANNELS | AUDIOPARAMETERS_MAXSAMPLERATE | AUDIOPARAMETERS_NO_RESAMPLE;
+		item->parameters.channels = 2;
+		item->parameters.bitsPerSample = 24;
+		item->parameters.sampleRate = 44100;
+		item->filename = _wcsdup(szFn);
+		item->decoder = (WASABI_API_DECODEFILE2 ? WASABI_API_DECODEFILE2->OpenAudioBackground(item->filename, &item->parameters) : NULL);
+		if (item->decoder)
 		{
 			HANDLE CalcThread = CreateThread(0, 0, (LPTHREAD_START_ROUTINE)CalcWaveformThread,
-											 (LPVOID)decoder, CREATE_SUSPENDED, NULL);
+											 (LPVOID)item, CREATE_SUSPENDED, NULL);
 			if (CalcThread)
 			{
 				SetThreadPriority(CalcThread, (!lowerpriority ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_LOWEST));
@@ -460,10 +477,13 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 			{
 				if (WASABI_API_DECODEFILE2)
 				{
-					WASABI_API_DECODEFILE2->CloseAudio(decoder);
+					WASABI_API_DECODEFILE2->CloseAudio(item->decoder);
 				}
 			}
 		}
+
+		free((LPVOID)item->filename);
+		free((LPVOID)item);
 	}
 
 	if (legacy)
@@ -474,7 +494,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 															WM_WA_IPC, (WPARAM)szFn, IPC_CANPLAY)/**/;
 		if (in_mod && (in_mod != (In_Module*)1))
 		{
-			wchar_t szSource[MAX_PATH] = {0};
+			wchar_t szSource[MAX_PATH] = { 0 };
 			GetModuleFileName(in_mod->hDllInstance, szSource, ARRAYSIZE(szSource));
 
 			// we got a valid In_Module * so make a temp copy
@@ -572,7 +592,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 					   destFile = CreateFile(szTempDLLDestination, GENERIC_READ, FILE_SHARE_READ,
 											 NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
-				FILETIME sourceTime = {0}, destTime = {0};
+				FILETIME sourceTime = { 0 }, destTime = { 0 };
 				GetFileTime(sourceFile, NULL, NULL, &sourceTime);
 				GetFileTime(destFile, NULL, NULL, &destTime);
 
@@ -660,7 +680,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 			{
 				if (pModule->UsesOutputPlug & IN_MODULE_FLAG_USES_OUTPUT_PLUGIN)
 				{
-					char szFile[MAX_PATH] = {0};
+					char szFile[MAX_PATH] = { 0 };
 					const bool unicode = !!(pModule->version & IN_UNICODE);
 					nLengthInMS = GetFileInfo(unicode, (char*)szFn, szFile);
 					if (nLengthInMS <= 0)
@@ -745,7 +765,7 @@ typedef struct {
 } CUETRACK;
 
 int nCueTracks = 0;
-CUETRACK pCueTracks[256] = {0};
+CUETRACK pCueTracks[256] = { 0 };
 
 void LoadCUE(wchar_t * szFn)
 {
@@ -757,7 +777,7 @@ void LoadCUE(wchar_t * szFn)
 
 	nCueTracks = 0;
 	int nCurrentTrack = 0;
-	wchar_t strs[256] = {0};
+	wchar_t strs[256] = { 0 };
 	while (fgetws(strs, 256, f))
 	{
 		wchar_t *str = strs;
@@ -801,8 +821,8 @@ void LoadCUE(wchar_t * szFn)
 
 LPWSTR GetTooltipText(HWND hWnd, int pos, int lengthInMS)
 {
-	static wchar_t coords[256] = {0};
-	RECT rc = {0};
+	static wchar_t coords[256] = { 0 };
+	RECT rc = { 0 };
 	GetClientRect(hWnd, &rc);
 
 	// adjust width down by 1px so that the tooltip should then
@@ -858,7 +878,7 @@ LPWSTR GetTooltipText(HWND hWnd, int pos, int lengthInMS)
 
 int GetFileLength()
 {
-	basicFileInfoStructW bfiW = {0};
+	basicFileInfoStructW bfiW = { 0 };
 	bfiW.filename = szFilename;
 	if (!GetBasicFileInfo(&bfiW, TRUE))
 	{
@@ -872,7 +892,7 @@ int GetFileLength()
 
 const int get_cpu_procs()
 {
-	SYSTEM_INFO sysinfo = {0};
+	SYSTEM_INFO sysinfo = { 0 };
 	GetSystemInfo(&sysinfo);
 	return sysinfo.dwNumberOfProcessors;
 }
@@ -886,11 +906,11 @@ BOOL GetFilenameHash(LPCWSTR filename, LPWSTR cacheFile)
 	// the main downside is that moving the file will
 	// now cause a re-render to be initiated but it's
 	// not that expensive of a process to do that now
-	unsigned char sha1[SHA_DIGEST_LENGTH] = {0};
+	unsigned char sha1[SHA_DIGEST_LENGTH] = { 0 };
 	if (SHA1Curl((unsigned char *)filename, wcslen(filename) * sizeof(wchar_t), sha1))
 	{
 		// convert to a hex string
-		//wchar_t cacheFile[61] = {0};
+		//wchar_t cacheFile[61] = { 0 };
 		for (int i = 0; i < 20; i++)
 		{
 			_snwprintf(cacheFile + i * 2, 3, L"%02x", sha1[i]);
@@ -985,7 +1005,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 
 			if (!PathFileExists(szWaveCacheFile))
 			{
-				wchar_t cacheFile[61] = {0};
+				wchar_t cacheFile[61] = { 0 };
 				if (GetFilenameHash(szFn, cacheFile))
 				{
 					PathCombine(szWaveCacheFile, szWaveCacheDir, cacheFile);
@@ -1055,7 +1075,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 	if (!hideTooltip && IsWindowVisible(hWndToolTip))
 	{
 		const int lengthInMS = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() : GetFileLength());
-		POINT pt = {0};
+		POINT pt = { 0 };
 		GetCursorPos(&pt);
 		ScreenToClient(hWndInner, &pt);
 		ti.lpszText = GetTooltipText(hWndInner, pt.x, lengthInMS);
@@ -1065,7 +1085,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 
 int GetPrivateProfileHex(LPCWSTR lpAppName, LPCWSTR lpKeyName, INT nDefault, LPCWSTR lpFileName)
 {
-	wchar_t str[16] = {0}, *s = str;
+	wchar_t str[16] = { 0 }, *s = str;
 	if (!GetPrivateProfileStringW(lpAppName, lpKeyName, L"", str, ARRAYSIZE(str), lpFileName) || !*str)
 	{
 		return nDefault;
@@ -1472,7 +1492,7 @@ bool ProcessMenuResult(UINT command, HWND parent)
 			if (!PathIsURL(szFilename) || !_wcsnicmp(szFilename, L"zip://", 6))
 			{
 				// support the older & newer cache filenames
-				wchar_t filename[MAX_PATH] = {0};
+				wchar_t filename[MAX_PATH] = { 0 };
 				PathCombine(filename, szWaveCacheDir, PathFindFileName(szFilename));
 				StringCchCat(filename, MAX_PATH, L".cache");
 				if (PathFileExists(filename))
@@ -1481,7 +1501,7 @@ bool ProcessMenuResult(UINT command, HWND parent)
 				}
 				else
 				{
-					wchar_t cacheFile[61] = {0};
+					wchar_t cacheFile[61] = { 0 };
 					if (GetFilenameHash(szFilename, cacheFile))
 					{
 						PathCombine(filename, szWaveCacheDir, cacheFile);
@@ -1594,7 +1614,7 @@ bool ProcessMenuResult(UINT command, HWND parent)
 		}
 		case ID_SUBMENU_ABOUT:
 		{
-			wchar_t message[512] = {0};
+			wchar_t message[512] = { 0 };
 			StringCchPrintf(message, ARRAYSIZE(message), WASABI_API_LNGSTRINGW(IDS_ABOUT_STRING), TEXT(__DATE__));
 			//MessageBox(plugin.hwndParent, message, pluginTitleW, 0);
 			AboutMessageBox(plugin.hwndParent, message,
@@ -1668,7 +1688,7 @@ LRESULT CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			// or below the item selected (or the no files in queue entry)
 			if (xPos == -1 || yPos == -1)
 			{
-				RECT rc = {0};
+				RECT rc = { 0 };
 				GetWindowRect(GetWindow(hWnd, GW_CHILD), &rc);
 				xPos = (short)rc.left;
 				yPos = (short)rc.top;
@@ -1735,12 +1755,12 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		}
 		case WM_PAINT:
 		{
-			PAINTSTRUCT psPaint = {0};
+			PAINTSTRUCT psPaint = { 0 };
 			HDC hdc = BeginPaint(hWnd, &psPaint);
 			// we get the client area instead of
 			// using the paint area as it's not
 			// the same if partially off-screen
-			RECT rc = {0};
+			RECT rc = { 0 };
 			GetClientRect(hWnd, &rc);
 			PaintWaveform(hdc, rc);
 			EndPaint(hWnd, &psPaint);
@@ -1791,7 +1811,7 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 				const int nSongLen = GetCurrentTrackLengthMilliSeconds();
 				if (nSongLen != -1 || bForceJump)
 				{
-					RECT rc = {0};
+					RECT rc = { 0 };
 					GetClientRect(hWnd, &rc);
 					const unsigned int ms = MulDiv(GET_X_LPARAM(lParam), nSongLen, (rc.right - rc.left));
 					// if not forcing a jump then just send as-is
@@ -1833,7 +1853,7 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 				if (lengthInMS > 0)
 				{
 					// ensures we'll get a WM_MOUSELEAVE 
-					TRACKMOUSEEVENT trackMouse = {0};
+					TRACKMOUSEEVENT trackMouse = { 0 };
 					trackMouse.cbSize = sizeof(trackMouse);
 					trackMouse.dwFlags = TME_LEAVE;
 					trackMouse.hwndTrack = hWnd;
@@ -1881,17 +1901,13 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 			GetFilePaths();
 			ProcessFilePlayback((const wchar_t*)wParam, TRUE);
 		}
-		else if (lParam == IPC_PLITEM_SELECTED_CHANGED)
+		else if ((lParam == IPC_PLITEM_SELECTED_CHANGED) && clickTrack)
 		{
-			if (clickTrack)
-			{
-				const int sel = (wParam - 1);
-				if (sel != -1)
-				{
-					// art change to show the selected item in the playlist editor
-					ProcessFilePlayback(GetPlaylistItemFile(sel), FALSE);
-				}
-			}
+			// art change to show the selected item in the playlist editor
+			// whilst also accounting for the selection changing & it then
+			// needing to be set back to the current item if there's none
+			ProcessFilePlayback(((wParam > 0) ? GetPlaylistItemFile((wParam - 1)) :
+												GetPlayingFilename(0)), FALSE);
 		}
 		else if (lParam == delay_load)
 		{
@@ -1904,14 +1920,14 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				// move it into the correct settings folder (due to UAC, etc)
 				/*if (!GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"Migrate", 0))
 				{
-					wchar_t szOldWaveCacheDir[MAX_PATH] = {0};
+					wchar_t szOldWaveCacheDir[MAX_PATH] = { 0 };
 					PathCombine(szOldWaveCacheDir, szDLLPath, L"wavecache");
 					if (PathFileExists(szOldWaveCacheDir))
 					{
-						wchar_t szFnFind[MAX_PATH] = {0};
+						wchar_t szFnFind[MAX_PATH] = { 0 };
 						PathCombine(szFnFind, szOldWaveCacheDir, L"*.cache");
 
-						WIN32_FIND_DATA wfd = {0};
+						WIN32_FIND_DATA wfd = { 0 };
 						HANDLE hFind = FindFirstFile(szFnFind, &wfd);
 						if (hFind != INVALID_HANDLE_VALUE)
 						{
@@ -1919,7 +1935,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 							{
 								// if we found a *.cache file then move it over
 								// as long as there's permission and the OS can
-								wchar_t szFnMove[MAX_PATH] = {0};
+								wchar_t szFnMove[MAX_PATH] = { 0 };
 								PathCombine(szFnFind, szOldWaveCacheDir, wfd.cFileName);
 								PathCombine(szFnMove, szWaveCacheDir, wfd.cFileName);
 								MoveFileEx(szFnFind, szFnMove, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED);
@@ -2038,6 +2054,7 @@ int PluginInit(void)
 #endif
 	if (WASABI_API_SVC != NULL)
 	{
+		ServiceBuild(WASABI_API_SVC, WASABI_API_METADATA, api_metadata2GUID);
 		ServiceBuild(WASABI_API_SVC, WASABI_API_DECODEFILE2, decodeFile2GUID);
 #ifdef WACUP_BUILD
 		WASABI_API_APP = plugin.app;
@@ -2068,7 +2085,7 @@ void PluginConfig()
 {
 	HMENU hMenu = WASABI_API_LOADMENUW(IDR_CONTEXTMENU);
 	HMENU popup = GetSubMenu(hMenu, 0);
-	RECT r = {0};
+	RECT r = { 0 };
 
 	MENUITEMINFO i = {sizeof(i), MIIM_ID | MIIM_STATE | MIIM_TYPE, MFT_STRING, MFS_UNCHECKED | MFS_DISABLED, 1};
 	i.dwTypeData = (LPWSTR)plugin.description;
@@ -2128,6 +2145,7 @@ void PluginQuit()
 		ClearCacheFolder(1);
 	}
 
+	ServiceRelease(WASABI_API_SVC, WASABI_API_METADATA, api_metadata2GUID);
 	ServiceRelease(WASABI_API_SVC, WASABI_API_DECODEFILE2, decodeFile2GUID);
 	ServiceRelease(WASABI_API_SVC, WASABI_API_SKIN, skinApiServiceGuid);
 #ifndef WACUP_BUILD
