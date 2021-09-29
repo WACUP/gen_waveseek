@@ -84,7 +84,8 @@ void DestroyEmbeddedWindow(embedWindowState* embedWindow)
 
 	if (old_visible != visible)
 	{
-		SaveNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"wnd_open", visible);
+		SaveNativeIniString(WINAMP_INI, INI_FILE_SECTION,
+							L"wnd_open", (!visible ? L"0" : NULL));
 	}
 
 	if (initial[1].top != height || initial[1].left != width)

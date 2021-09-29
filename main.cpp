@@ -34,8 +34,7 @@
 #include <openssl/sha.h>
 #endif
 
-
-#define PLUGIN_VERSION "3.7"
+#define PLUGIN_VERSION "3.7.6"
 
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS
@@ -62,6 +61,7 @@ static const GUID embed_guid =
 #endif
 
 HWND hWndWaveseek = NULL, hWndToolTip = NULL, hWndInner = NULL;
+static ATOM wndclass = 0;
 WNDPROC oldPlaylistWndProc = NULL;
 embedWindowState embed = { 0 };
 TOOLINFO ti = { 0 };
@@ -92,6 +92,9 @@ int DummyVSAGetMode(int *specNch, int *waveNch) { return 0; }
 int DummyVSAAdd(void *data, int timestamp) { return 0; }
 void DummyVSASetInfo(int srate, int nch) {}
 void DummySetInfo(int bitrate, int srate, int stereo, int synched) {}
+
+LRESULT CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
+							  UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 
 void FinishProcessingFile(LPCWSTR szCacheFile, unsigned short *pBuffer);
 
@@ -139,17 +142,17 @@ void GetFilePaths()
 		// find the winamp.ini for the Winamp install being used
 #ifdef WACUP_BUILD
 		//ini_file = (wchar_t *)GetPaths()->winamp_ini_file;
-		(void)StringCchCopy(szWaveCacheDir, ARRAYSIZE(szWaveCacheDir), GetPaths()->settings_dir);
+		PathCombine(szWaveCacheDir, GetPaths()->settings_sub_dir, L"wavecache");
 #else
 		ini_file = (wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETINIFILEW);
 		(void)StringCchCopy(szWaveCacheDir, ARRAYSIZE(szWaveCacheDir), (wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETINIDIRECTORYW));
+		PathAppend(szWaveCacheDir, L"Plugins\\wavecache");
 #endif
 
 		// make the cache folder in the user's settings folder e.g. %APPDATA%\Winamp\Plugins\wavecache
 		// which will better ensure that the cache will be correctly generated though it will fallback
 		// to %PROGRAMFILES(x86)%\Winamp\Plugins\wavecache or %PROGRAMFILES%\Winamp\Plugins\wavecache
 		// as applicable to the Windows and Winamp version being used (more so with pre v5.11 clients)
-		PathAppend(szWaveCacheDir, L"Plugins\\wavecache");
 		CreateDirectory(szWaveCacheDir, NULL);
 
 #ifndef WACUP_BUILD
@@ -1428,7 +1431,7 @@ void ClearCacheFolder(const bool mode)
 {
 	for (int i = 0; i < 1 + !!mode; i++)
 	{
-		WIN32_FIND_DATAW wfd = { 0 };
+		WIN32_FIND_DATA wfd = { 0 };
 		wchar_t szFnFind[MAX_PATH] = { 0 };
 		PathCombine(szFnFind, szWaveCacheDir, (!i ? L"*.cache" : L"*.dll"));
 		HANDLE hFind = FindFirstFile(szFnFind, &wfd);
@@ -1604,6 +1607,14 @@ bool ProcessMenuResult(UINT command, HWND parent)
 		{
 			legacy = (!legacy);
 			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"legacy", legacy);
+			if (legacy)
+			{
+				Subclass(hWndWaveseek, EmdedWndProc);
+			}
+			else
+			{
+				UnSubclass(hWndWaveseek, EmdedWndProc);
+			}
 			break;
 		}
 		case ID_SUBMENU_SHOWDEBUGGINGMESSAGES:
@@ -1659,6 +1670,25 @@ LRESULT CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			// real main window when using the dll re-use hack in place
 			return SendMessage(plugin.hwndParent, uMsg, wParam, lParam);
 		}
+	}
+
+	return DefSubclass(hWnd, uMsg, wParam, lParam);
+}
+
+LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+	// if you need to do other message handling then you can just place this first and
+	// process the messages you need to afterwards. note this is passing the frame and
+	// its id so if you have a few embedded windows you need to do this with each child
+	if (HandleEmbeddedWindowChildMessages(hWndWaveseek, WINAMP_WAVEFORM_SEEK_MENUID,
+										  hWnd, uMsg, wParam, lParam))
+	{
+		return 0;
+	}
+
+	bool bForceJump = false;
+	switch (uMsg)
+	{
 		case WM_COMMAND:	// for what's handled from the accel table
 		{
 			if (ProcessMenuResult(wParam, hWnd))
@@ -1674,52 +1704,8 @@ LRESULT CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			PostMessage(plugin.hwndParent, uMsg, wParam, lParam);
 			break;
 		}
-		case WM_CONTEXTMENU:
-		{
-			short xPos = GET_X_LPARAM(lParam);
-			short yPos = GET_Y_LPARAM(lParam);
-
-			HMENU hMenu = WASABI_API_LOADMENUW(IDR_CONTEXTMENU);
-			HMENU popup = GetSubMenu(hMenu, 0);
-			SetupConfigMenu(popup);
-
-			// this will handle the menu being shown not via the mouse actions
-			// so is positioned just below the header if no selection but there's a queue
-			// or below the item selected (or the no files in queue entry)
-			if (xPos == -1 || yPos == -1)
-			{
-				RECT rc = { 0 };
-				GetWindowRect(GetWindow(hWnd, GW_CHILD), &rc);
-				xPos = (short)rc.left;
-				yPos = (short)rc.top;
-			}
-
-			ProcessMenuResult(TrackPopup(popup, TPM_LEFTALIGN | TPM_LEFTBUTTON |
-							  TPM_RIGHTBUTTON | TPM_RETURNCMD, xPos, yPos, hWnd), hWnd);
-
-			DestroyMenu(hMenu);
-			break;
-		}
-	}
-
-	return DefSubclass(hWnd, uMsg, wParam, lParam);
-}
-
-INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
-{
-	// if you need to do other message handling then you can just place this first and
-	// process the messages you need to afterwards. note this is passing the frame and
-	// its id so if you have a few embedded windows you need to do this with each child
-	if (HandleEmbeddedWindowChildMessages(hWndWaveseek, WINAMP_WAVEFORM_SEEK_MENUID,
-										  hWnd, uMsg, wParam, lParam))
-	{
-		return 0;
-	}
-
-	bool bForceJump = false;
-	switch (uMsg)
-	{
-		case WM_INITDIALOG:
+		case WM_CREATE:
+		//case WM_INITDIALOG:
 		{
 			hWndToolTip = CreateWindowEx(WS_EX_TOPMOST, TOOLTIPS_CLASSW, NULL,
 										 WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP,
@@ -1738,7 +1724,6 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			}
 
 			SetTimer(hWnd, TIMER_ID, TIMER_FREQ, NULL);
-			SetWindowLongPtr(hWnd, GWLP_ID, 101);
 			break;
 		}
 		case WM_TIMER:
@@ -1764,12 +1749,39 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			GetClientRect(hWnd, &rc);
 			PaintWaveform(hdc, rc);
 			EndPaint(hWnd, &psPaint);
-			break;
+			return 0;
 		}
 		// make sure we catch all appropriate skin changes
 		case WM_USER + 0x202:	// WM_DISPLAYCHANGE / IPC_SKIN_CHANGED_NEW / ML_MSG_SKIN_CHANGED
 		{
 			ProcessSkinChange();
+			break;
+		}
+		case WM_USER + 0x98:
+		//case WM_CONTEXTMENU:
+		{
+			int xPos = GET_X_LPARAM(lParam),
+				yPos = GET_Y_LPARAM(lParam);
+
+			HMENU hMenu = WASABI_API_LOADMENUW(IDR_CONTEXTMENU);
+			HMENU popup = GetSubMenu(hMenu, 0);
+			SetupConfigMenu(popup);
+
+			// this will handle the menu being shown not via the mouse actions
+			// so is positioned just below the header if no selection but there's a queue
+			// or below the item selected (or the no files in queue entry)
+			if ((xPos == -1) || (yPos == -1))
+			{
+				RECT rc = { 0 };
+				GetWindowRect(hWnd, &rc);
+				xPos = (short)rc.left;
+				yPos = (short)rc.top;
+			}
+
+			ProcessMenuResult(TrackPopup(popup, TPM_LEFTALIGN | TPM_LEFTBUTTON |
+							  TPM_RIGHTBUTTON | TPM_RETURNCMD, xPos, yPos, hWnd), hWnd);
+
+			DestroyMenu(hMenu);
 			break;
 		}
 		case WM_LBUTTONDBLCLK:
@@ -1885,7 +1897,7 @@ INT_PTR CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			break;
 		}
 	}
-	return 0;
+	return DefWindowProc(hWnd, uMsg, wParam, lParam);
 }
 
 void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const LPARAM lParam)
@@ -1908,6 +1920,15 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 			// needing to be set back to the current item if there's none
 			ProcessFilePlayback(((wParam > 0) ? GetPlaylistItemFile((wParam - 1)) :
 												GetPlayingFilename(0)), FALSE);
+		}
+		else if (lParam == IPC_GET_EMBEDIF_NEW_HWND)
+		{
+			if (((HWND)wParam == hWndWaveseek) && visible &&
+				(InitialShowState() != SW_SHOWMINIMIZED))
+			{
+				// only show on startup if under a classic skin and was set
+				PostMessage(hWndWaveseek, WM_USER + 102, 0, 0);
+			}
 		}
 		else if (lParam == delay_load)
 		{
@@ -1988,20 +2009,41 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				// once the window is created we can then specify the window title and menu integration
 				SetWindowText(hWndWaveseek, WASABI_API_LNGSTRINGW(IDS_WAVEFORM_SEEKER));
 
-				Subclass(hWndWaveseek, EmdedWndProc);
-
-				HACCEL accel = WASABI_API_LOADACCELERATORSW(IDR_ACCELERATOR_WND);
-				if (accel)
+				// there's no need to be subclassing the
+				// window unless we're using legacy mode
+				// TODO might it be simpler to just have
+				//		it call this window instead... ?
+				if (legacy)
 				{
-					WASABI_API_APP->app_addAccelerators(hWndWaveseek, &accel, 1, TRANSLATE_MODE_NORMAL);
+					Subclass(hWndWaveseek, EmdedWndProc);
 				}
 
-				hWndInner = CreateDialogParam(plugin.hDllInstance, MAKEINTRESOURCE(IDD_VIEW),
-											  hWndWaveseek, InnerWndProc, (LPARAM)hWndWaveseek);
+				WNDCLASSEX wcex = { 0 };
+				wcex.cbSize = sizeof(WNDCLASSEX);
+				wcex.lpszClassName = L"WaveseekWnd";
+				wcex.hInstance = plugin.hDllInstance;
+				wcex.lpfnWndProc = InnerWndProc;
+				wndclass = RegisterClassEx(&wcex);
+				if (wndclass)
+				{
+					hWndInner = CreateWindowEx(WS_EX_NOPARENTNOTIFY, (LPCTSTR)wndclass, 0, WS_CHILD |
+											   WS_VISIBLE, 0, 0, 0, 0, hWndWaveseek, (HMENU)101,
+											   plugin.hDllInstance, (LPVOID)hWndWaveseek);
+
+					if (IsWindow(hWndInner))
+					{
 				// just to be certain if the skinned preferences support is installed
 				// we want to ensure that we're not going to have it touch our window
 				// as it can otherwise cause some occassional drawing issues/clashes.
 				SetProp(hWndInner, L"SKPrefs_Ignore", (HANDLE)1);
+
+						HACCEL accel = WASABI_API_LOADACCELERATORSW(IDR_ACCELERATOR_WND);
+						if (accel)
+						{
+							WASABI_API_APP->app_addAccelerators(hWndInner, &accel, 1, TRANSLATE_MODE_NORMAL);
+						}
+					}
+				}
 
 				ProcessFilePlayback(GetPlayingFilename(0), FALSE);
 
@@ -2017,14 +2059,14 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				{
 					SetEmbeddedWindowMinimizedMode(hWndWaveseek, TRUE);
 				}
-				else
+				/*else
 				{
 					// only show on startup if under a classic skin and was set
 					if (visible)
 					{
 						PostMessage(hWndWaveseek, WM_USER + 102, 0, 0);
 					}
-				}
+				}*/
 			}
 			else if (wParam == 1)
 			{
