@@ -34,7 +34,7 @@
 #include <openssl/sha.h>
 #endif
 
-#define PLUGIN_VERSION "3.8"
+#define PLUGIN_VERSION "3.8.1"
 
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS
@@ -1718,13 +1718,11 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			break;
 		}
 		case WM_CREATE:
-		//case WM_INITDIALOG:
 		{
-			hWndToolTip = CreateWindowEx(WS_EX_TOPMOST, TOOLTIPS_CLASSW, NULL,
-										 WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP,
+			hWndToolTip = CreateWindowEx(WS_EX_TOPMOST, TOOLTIPS_CLASSW, NULL, WS_POPUP |
+										 TTS_NOPREFIX | TTS_ALWAYSTIP, CW_USEDEFAULT,
 										 CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-										 CW_USEDEFAULT, (HWND)lParam, NULL,
-										 plugin.hDllInstance, NULL);
+										 hWnd, NULL, plugin.hDllInstance, NULL);
 			if (IsWindow(hWndToolTip))
 			{
 				ti.cbSize = sizeof(TOOLINFO);
