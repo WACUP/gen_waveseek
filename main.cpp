@@ -34,7 +34,7 @@
 #include <openssl/sha.h>
 #endif
 
-#define PLUGIN_VERSION "3.7.6"
+#define PLUGIN_VERSION "3.8"
 
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS
@@ -221,17 +221,19 @@ void MPG123HotPatch(HINSTANCE module)
 unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer,
 							  unsigned int nSample, unsigned int nFramePerWindow,
 							  unsigned int nNumChannels, unsigned long nAmplitude,
-							  unsigned long *nSampleCount, unsigned int *nBufferPointer)
+							  unsigned long &nSampleCount, unsigned int &nBufferPointer,
+							  unsigned long &nTotalSampleCount)
 {
 	if (!kill_threads)
 	{
 		nAmplitude = max(nAmplitude, nSample);
-		++*nSampleCount;
+		++nSampleCount;
+		++nTotalSampleCount;
 
-		if (((*nSampleCount / nNumChannels) == nFramePerWindow) && (*nBufferPointer < SAMPLE_BUFFER_SIZE))
+		if (((nSampleCount / nNumChannels) == nFramePerWindow) && (nBufferPointer < SAMPLE_BUFFER_SIZE))
 		{
-			pBuffer[(*nBufferPointer)++] = nAmplitude;
-			*nSampleCount = 0;
+			pBuffer[nBufferPointer++] = nAmplitude;
+			nSampleCount = 0;
 			nAmplitude = 0;
 
 			if (StrStrI(szFilename, szFn))
@@ -285,7 +287,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	if (item->decoder)
 	{
 		wchar_t szThreadWaveCacheFile[MAX_PATH] = { 0 };
-		unsigned long nAmplitude = 0, nSampleCount = 0;
+		unsigned long nAmplitude = 0, nSampleCount = 0, nTotalSampleCount = 0;
 		unsigned int nFramePerWindow = 0, nBufferPointer = 0;
 		unsigned short pThreadSampleBuffer[SAMPLE_BUFFER_SIZE] = { 0 };
 
@@ -323,6 +325,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 			goto abort;
 		}
 
+		const long nExpectedTotalSampleCount = (nFramePerWindow * SAMPLE_BUFFER_SIZE *
+												item->parameters.channels);
 		const int padded_bits = ((item->parameters.bitsPerSample + 7) & (~7)) / 8;
 		const size_t buffer_size = (1152 * item->parameters.channels * padded_bits);
 		char *data = (char *)calloc(buffer_size, sizeof(char));
@@ -340,9 +344,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 				break;
 			}
 
-			const size_t samples = (bytesRead ? (bytesRead / padded_bits) : 0);
-			// cppcheck-suppress knownConditionTrueFalse
-			if (!samples || kill_threads)
+			if (!(bytesRead ? (bytesRead / padded_bits) : 0) || kill_threads)
 			{
 				break;
 			}
@@ -361,7 +363,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 					const unsigned int nSample = abs(*(p++));
 					nAmplitude = AddThreadSample(item->filename, &pThreadSampleBuffer[0], nSample,
 												 nFramePerWindow, item->parameters.channels,
-												 nAmplitude, &nSampleCount, &nBufferPointer);
+												 nAmplitude, nSampleCount, nBufferPointer, nTotalSampleCount);
 				}
 			}
 			else if (item->parameters.bitsPerSample == 24)
@@ -375,7 +377,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 					p += 3;
 					nAmplitude = AddThreadSample(item->filename, &pThreadSampleBuffer[0], nSample,
 												 nFramePerWindow, item->parameters.channels,
-												 nAmplitude, &nSampleCount, &nBufferPointer);
+												 nAmplitude, nSampleCount, nBufferPointer, nTotalSampleCount);
 				}
 			}
 			else
@@ -384,6 +386,15 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 				// so that a message is provided to the user else
 				// it can cause confusion due to looking broken.
 				bUnsupported = 1;
+			}
+
+			// if we're beyond the maximum expected samples then
+			// we should just abort as it's likely to be related
+			// to a file format that does looping or it doesn't
+			// report the length correctly vs just spinning here
+			if (nTotalSampleCount > nExpectedTotalSampleCount)
+			{
+				break;
 			}
 		}
 
@@ -522,6 +533,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 				StrStrI(filename, L"in_snes.dll") ||
 				StrStrI(filename, L"in_snes.trb") ||
 				StrStrI(filename, L"in__snesamp_wrapper.dll") ||
+				StrStrI(filename, L"in_txt.dll") ||
 				StrStrI(filename, L"in_url.dll") ||
 				StrStrI(filename, L"in_vgmstream.dll") ||
 				StrStrI(filename, L"in_vorbis.dll") ||
@@ -638,6 +650,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 
 				__try
 				{
+					// cppcheck-suppress nullPointerRedundantCheck
 					PluginGetter pluginGetter = (PluginGetter)GetProcAddress(hDLL, "winampGetInModule2");
 					if (!pluginGetter)
 					{
@@ -2032,10 +2045,10 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 
 					if (IsWindow(hWndInner))
 					{
-				// just to be certain if the skinned preferences support is installed
-				// we want to ensure that we're not going to have it touch our window
-				// as it can otherwise cause some occassional drawing issues/clashes.
-				SetProp(hWndInner, L"SKPrefs_Ignore", (HANDLE)1);
+						// just to be certain if the skinned preferences support is installed
+						// we want to ensure that we're not going to have it touch our window
+						// as it can otherwise cause some occassional drawing issues/clashes.
+						//SetProp(hWndInner, L"SKPrefs_Ignore", (HANDLE)1);
 
 						HACCEL accel = WASABI_API_LOADACCELERATORSW(IDR_ACCELERATOR_WND);
 						if (accel)

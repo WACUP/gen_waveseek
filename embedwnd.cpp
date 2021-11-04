@@ -118,6 +118,7 @@ void AddEmbeddedWindowToMenus(BOOL add, UINT menuId, LPWSTR menuString, BOOL set
 
 #ifdef IPC_ADJUST_OPTIONSMENUPOS
 	// this will adjust the menu position (there were bugs with this api but all is fine for 5.5+)
+	// cppcheck-suppress ConfigurationNotChecked	
 	SendMessage(plugin.hwndParent, WM_WA_IPC, (add ? 1 : -1), IPC_ADJUST_OPTIONSMENUPOS);
 #endif
 
@@ -143,6 +144,7 @@ void AddEmbeddedWindowToMenus(BOOL add, UINT menuId, LPWSTR menuString, BOOL set
 
 #ifdef IPC_ADJUST_FFWINDOWSMENUPOS
 	// this will adjust the menu position (there were bugs with this api but all is fine for 5.5+)
+	// cppcheck-suppress ConfigurationNotChecked
 	SendMessage(plugin.hwndParent, WM_WA_IPC, (add ? 1 : -1), IPC_ADJUST_FFWINDOWSMENUPOS);
 #endif
 }
