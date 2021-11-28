@@ -34,7 +34,7 @@
 #include <openssl/sha.h>
 #endif
 
-#define PLUGIN_VERSION "3.8.1"
+#define PLUGIN_VERSION "3.8.2"
 
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS
@@ -298,17 +298,11 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		// query is going to block with other requests so it
 		// is simpler to add a bit of a wait for now to have
 		// this be more reliable in rendering a new file...
-		Sleep(20);
+		Sleep(50);
 
 		wchar_t buf[16] = { 0 };
-		if (WASABI_API_METADATA != NULL)
-		{
-			void *token = NULL;
-			WASABI_API_METADATA->GetExtendedFileInfo(item->filename, L"length", buf, ARRAYSIZE(buf), &token);
-			WASABI_API_METADATA->FreeExtendedFileInfoToken(&token);
-		}
-
-		if (buf[0])
+		if (GetExtendedFileInfoW(item->filename, L"length", buf,
+								 ARRAYSIZE(buf)) && buf[0])
 		{
 			const int lengthMS = _wtoi(buf);
 			if (lengthMS > 0)
@@ -478,8 +472,8 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 		item->decoder = (WASABI_API_DECODEFILE2 ? WASABI_API_DECODEFILE2->OpenAudioBackground(item->filename, &item->parameters) : NULL);
 		if (item->decoder)
 		{
-			HANDLE CalcThread = CreateThread(0, 0, (LPTHREAD_START_ROUTINE)CalcWaveformThread,
-											 (LPVOID)item, CREATE_SUSPENDED, NULL);
+			HANDLE CalcThread = CreateThread(0, 0, CalcWaveformThread, (LPVOID)
+											 item, CREATE_SUSPENDED, NULL);
 			if (CalcThread)
 			{
 				SetThreadPriority(CalcThread, (!lowerpriority ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_LOWEST));
@@ -1898,6 +1892,12 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		{
 			SendMessage(hWndToolTip, TTM_TRACKACTIVATE, FALSE, (LPARAM)&ti);
 			break;
+		}
+		case WM_CLOSE:
+		{
+			// ths is needed to avoid the inner window being
+			// destroyed when trying to close the outer one!
+			return 0;
 		}
 		case WM_DESTROY:
 		{
