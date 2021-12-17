@@ -34,7 +34,7 @@
 #include <openssl/sha.h>
 #endif
 
-#define PLUGIN_VERSION "3.8.2"
+#define PLUGIN_VERSION "3.8.3"
 
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS
@@ -959,35 +959,46 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 {
 	if (szFn && *szFn)
 	{
-		if (StrStrI(szFilename, szFn) && bIsProcessing)
+		// this is used to try to deal with relative paths
+		// where it can otherwise cause re-processing when
+		// there's no need to actually do that when it has
+		// already been processed & all of that fun stuff!
+		wchar_t usable_path[MAX_PATH] = { 0 };
+		ProcessPath(szFn, usable_path, ARRAYSIZE(usable_path), FALSE);
+		if (!usable_path[0])
+		{
+			StringCchCopy(usable_path, ARRAYSIZE(usable_path), szFn);
+		}
+
+		if (StrStrI(szFilename, usable_path) && bIsProcessing)
 		{
 			// if we're already processing and we're asked
 			// to re-process (e.g. multiple clicks in the
 			// main playlist editor) then we try to filter
 			// out and keep going if it's the same file.
-			bIsCurrent = !_wcsicmp(szFn, GetPlayingFilename(0));
+			bIsCurrent = !_wcsicmp(usable_path, GetPlayingFilename(0));
 			return;
 		}
 
 		ProcessStop();
 
 		bIsLoaded = bUnsupported = false;
-		bIsCurrent = !_wcsicmp(szFn, GetPlayingFilename(0));
+		bIsCurrent = !_wcsicmp(usable_path, GetPlayingFilename(0));
 
-		(void)StringCchCopy(szFilename, ARRAYSIZE(szFilename), szFn);
+		(void)StringCchCopy(szFilename, ARRAYSIZE(szFilename), usable_path);
 
 		nCueTracks = 0;
 
 		// make sure that it's valid and something we can process
-		if ((!PathIsURL(szFn) && PathFileExists(szFn) && AllowedFile(szFn)) ||
-			(!_wcsnicmp(szFn, L"zip://", 6) && AllowedFile(szFn)))
+		if ((!PathIsURL(usable_path) && PathFileExists(usable_path) && AllowedFile(usable_path)) ||
+			(!_wcsnicmp(usable_path, L"zip://", 6) && AllowedFile(usable_path)))
 		{
 			// if enabled then only process audio only files
 			// as pocessing video can cause some problems...
 			if (audioOnly)
 			{
 				wchar_t buf[4] = { 0 };
-				if (GetExtendedFileInfoW(szFn, L"type", buf,
+				if (GetExtendedFileInfoW(usable_path, L"type", buf,
 										 ARRAYSIZE(buf)) && buf[0])
 				{
 					if (_wtoi(buf) == 1)
@@ -998,7 +1009,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 			}
 
 			wchar_t szCue[MAX_PATH] = { 0 };
-			(void)StringCchCopy(szCue, ARRAYSIZE(szCue), szFn);
+			(void)StringCchCopy(szCue, ARRAYSIZE(szCue), usable_path);
 			PathRenameExtension(szCue, L".cue");
 
 			if (PathFileExists(szCue))
@@ -1010,20 +1021,20 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 			// for a smoother upgrade we'll still look
 			// for the original cache file but a newer
 			// file will be made with the better name.
-			PathCombine(szWaveCacheFile, szWaveCacheDir, PathFindFileName(szFn));
+			PathCombine(szWaveCacheFile, szWaveCacheDir, PathFindFileName(usable_path));
 			StringCchCat(szWaveCacheFile, MAX_PATH, L".cache");
 
 			if (!PathFileExists(szWaveCacheFile))
 			{
 				wchar_t cacheFile[61] = { 0 };
-				if (GetFilenameHash(szFn, cacheFile))
+				if (GetFilenameHash(usable_path, cacheFile))
 				{
 					PathCombine(szWaveCacheFile, szWaveCacheDir, cacheFile);
 				}
 			}
 #else
 			// TODO apply the above to a non-WACUP install
-			PathCombine(szWaveCacheFile, szWaveCacheDir, PathFindFileName(szFn));
+			PathCombine(szWaveCacheFile, szWaveCacheDir, PathFindFileName(usable_path));
 			StringCchCat(szWaveCacheFile, MAX_PATH, L".cache");
 #endif
 
@@ -1035,7 +1046,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 					// found it so no need to re-add
 					// as that's just going to cause
 					// more processing / duplication
-					if (StrStrI(szFn, (*itr).first.c_str()))
+					if (StrStrI(usable_path, (*itr).first.c_str()))
 					{
 						bIsProcessing = true;
 						return;
@@ -1050,10 +1061,10 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 				static int cpu_count = get_cpu_procs();
 				if (processing_list.size() < cpu_count)
 				{
-					HANDLE thread = StartProcessingFile(szFn, start_playing);
+					HANDLE thread = StartProcessingFile(usable_path, start_playing);
 					if (thread != NULL)
 					{
-						processing_list[std::wstring(szFn)] = thread;
+						processing_list[std::wstring(usable_path)] = thread;
 					}
 				}
 				else
