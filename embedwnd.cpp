@@ -218,7 +218,7 @@ LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd,
 	return 0;
 }
 
-void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT menuId, embedWindowState* embedWindow,
+void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT_PTR menuId, embedWindowState* embedWindow,
 											  HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	// these are done before the original window proceedure has been called to
