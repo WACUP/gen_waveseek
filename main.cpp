@@ -1,3 +1,5 @@
+#define PLUGIN_VERSION "3.9.4"
+
 #define WACUP_BUILD
 //#define USE_GDIPLUS
 #include <windows.h>
@@ -32,8 +34,6 @@
 #include <nu/ServiceBuilder.h>
 #include <openssl/sha.h>
 #endif
-
-#define PLUGIN_VERSION "3.9.3"
 
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS
@@ -472,6 +472,8 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 	if (WASABI_API_DECODEFILE2 && WASABI_API_DECODEFILE2->DecoderExists(szFn))
 	{
 		CalcThreadParams *item = (CalcThreadParams *)calloc(1, sizeof(CalcThreadParams));
+		if (item)
+		{
 		item->parameters.flags = AUDIOPARAMETERS_MAXCHANNELS | AUDIOPARAMETERS_MAXSAMPLERATE | AUDIOPARAMETERS_NO_RESAMPLE;
 		item->parameters.channels = 2;
 		item->parameters.bitsPerSample = 24;
@@ -501,6 +503,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 
 		free((LPVOID)item->filename);
 		free((LPVOID)item);
+	}
 	}
 
 #ifndef _WIN64
@@ -916,10 +919,13 @@ int GetFileLength()
 	return -1000;
 }
 
-const int get_cpu_procs()
+const int get_cpu_procs(void)
 {
-	SYSTEM_INFO sysinfo = { 0 };
+	static SYSTEM_INFO sysinfo = { 0 };
+	if (!sysinfo.dwNumberOfProcessors)
+{
 	GetSystemInfo(&sysinfo);
+	}
 	return sysinfo.dwNumberOfProcessors;
 }
 
@@ -1074,7 +1080,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 				// being processed at the same time
 				// to avoid causing some setups to
 				// hang due to quick 'next' actions
-				static int cpu_count = get_cpu_procs();
+				static const int cpu_count = get_cpu_procs();
 				if (processing_list.size() < cpu_count)
 				{
 					HANDLE thread = StartProcessingFile(usable_path, start_playing);
