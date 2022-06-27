@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.9.4"
+#define PLUGIN_VERSION "3.9.7"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -226,11 +226,10 @@ void MPG123HotPatch(HINSTANCE module)
 }
 #endif
 
-unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer,
-							  unsigned int nSample, unsigned int nFramePerWindow,
-							  unsigned int nNumChannels, unsigned long nAmplitude,
-							  unsigned long &nSampleCount, unsigned int &nBufferPointer,
-							  unsigned long &nTotalSampleCount)
+unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer, const unsigned int nSample,
+							  const unsigned int nFramePerWindow, const unsigned int nNumChannels,
+							  unsigned long nAmplitude, unsigned long &nSampleCount,
+							  unsigned int &nBufferPointer, uint64_t &nTotalSampleCount)
 {
 	if (!kill_threads)
 	{
@@ -238,7 +237,8 @@ unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer,
 		++nSampleCount;
 		++nTotalSampleCount;
 
-		if (((nSampleCount / nNumChannels) == nFramePerWindow) && (nBufferPointer < SAMPLE_BUFFER_SIZE))
+		if (((nSampleCount / nNumChannels) == nFramePerWindow) &&
+			(nBufferPointer < SAMPLE_BUFFER_SIZE))
 		{
 			pBuffer[nBufferPointer++] = nAmplitude;
 			nSampleCount = 0;
@@ -295,8 +295,9 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	if (item->decoder)
 	{
 		wchar_t szThreadWaveCacheFile[MAX_PATH] = { 0 };
-		unsigned long nAmplitude = 0, nSampleCount = 0, nTotalSampleCount = 0;
+		unsigned long nAmplitude = 0, nSampleCount = 0;
 		unsigned int nFramePerWindow = 0, nBufferPointer = 0;
+		uint64_t nTotalSampleCount = 0;
 		unsigned short pThreadSampleBuffer[SAMPLE_BUFFER_SIZE] = { 0 };
 
 		SecureZeroMemory(pSampleBuffer, SAMPLE_BUFFER_SIZE * sizeof(unsigned short));
@@ -312,10 +313,11 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		if (GetExtendedFileInfoW(item->filename, L"length", buf,
 								 ARRAYSIZE(buf), NULL) && buf[0])
 		{
-			const int lengthMS = _wtoi(buf);
+			const int lengthMS = WStr2I(buf);
 			if (lengthMS > 0)
 			{
-				nFramePerWindow = MulDiv(lengthMS, item->parameters.sampleRate, SAMPLE_BUFFER_SIZE * 1000) + 1;
+				nFramePerWindow = MulDiv(lengthMS, item->parameters.sampleRate,
+										 SAMPLE_BUFFER_SIZE * 1000) + 1;
 			}
 		}
 		else
@@ -327,8 +329,10 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 			goto abort;
 		}
 
-		const long nExpectedTotalSampleCount = (nFramePerWindow * SAMPLE_BUFFER_SIZE *
-												item->parameters.channels);
+		// ensure that the expected count will work with vary large files where there's
+		// millions & billions of samples otherwise it'll abort the rendering too soon!
+		const uint64_t nExpectedTotalSampleCount = (nFramePerWindow * SAMPLE_BUFFER_SIZE
+													* 1ULL * item->parameters.channels);
 		const int padded_bits = (((item->parameters.bitsPerSample + 7) & (~7)) / 8);
 		const size_t buffer_size = (1152 * item->parameters.channels * padded_bits);
 		char *data = (char *)calloc(buffer_size, sizeof(char));
@@ -530,8 +534,9 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 
 			// prime the plug-in just in-case it supports this
 			// & the plug-in author forgets to do it as needed
-			const int ver = ((in_mod->version & ~IN_UNICODE) & ~IN_INIT_RET);
-			if ((ver == 0x102) || // it's a wacup build so skip
+			// or it's a wacup plug-in build so skip it anyway
+			if ((((in_mod->version & ~IN_UNICODE) &
+				~IN_INIT_RET) == IN_VER_REVISION) ||
 				wcsistr(filename, L"in_cdda.dll") ||
 				wcsistr(filename, L"in_flac.dll") ||
 				wcsistr(filename, L"in_midi.dll") ||
@@ -660,7 +665,6 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 
 				__try
 				{
-					// cppcheck-suppress nullPointerRedundantCheck
 					PluginGetter pluginGetter = (PluginGetter)GetProcAddress(hDLL, "winampGetInModule2");
 					if (!pluginGetter)
 					{
@@ -905,7 +909,7 @@ LPWSTR GetTooltipText(HWND hWnd, int pos, int lengthInMS)
 	return coords;
 }
 
-int GetFileLength()
+int GetFileLengthMilliseconds(void)
 {
 	basicFileInfoStructW bfiW = { 0 };
 	bfiW.filename = szFilename;
@@ -1069,7 +1073,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 					if (GetExtendedFileInfoW(usable_path, L"type", buf,
 											 ARRAYSIZE(buf), NULL) && buf[0])
 					{
-						if (_wtoi(buf) == 1)
+						if (WStr2I(buf) == 1)
 						{
 							return;
 						}
@@ -1118,7 +1122,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 	// & update it so that it reflects the current view.
 	if (!hideTooltip && IsWindowVisible(hWndToolTip))
 	{
-		const int lengthInMS = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() : GetFileLength());
+		const int lengthInMS = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() : GetFileLengthMilliseconds());
 		POINT pt = { 0 };
 		GetCursorPos(&pt);
 		ScreenToClient(hWndInner, &pt);
@@ -1143,7 +1147,7 @@ int GetPrivateProfileHex(LPCWSTR lpAppName, LPCWSTR lpKeyName, INT nDefault, LPC
 	int val = nDefault;
 	if (s && *s)
 	{
-		val = wcstol(s, &s, 16);
+		val = WStr2L(s, &s, 16);
 	}
 
 	const int r = ((val >> 16) & 255),
@@ -1256,7 +1260,7 @@ void ProcessSkinChange(BOOL skip_refresh = FALSE)
 void PaintWaveform(HDC hdc, RECT rc)
 {
 	const int nSongPos = (bIsCurrent ? GetCurrentTrackPos() : 0),
-			  nSongLen = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() : GetFileLength()),
+			  nSongLen = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() : GetFileLengthMilliseconds()),
 			  nBufPos = (nSongLen != -1 ? MulDiv(nSongPos, SAMPLE_BUFFER_SIZE, nSongLen) : 0),
 			  h = (rc.bottom - rc.top);
 	int w = (rc.right - rc.left);
@@ -1564,6 +1568,7 @@ bool ProcessMenuResult(UINT command, HWND parent)
 			// we will want to fall through so we
 			// can then re-render the current file
 		}
+		[[fallthrough]];
 		case ID_SUBMENU_RERENDER:
 		{
 			if (!IsPathURL(szFilename) || !_wcsnicmp(szFilename, L"zip://", 6))
@@ -1779,6 +1784,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 				break;
 			}
 		}
+		[[fallthrough]];
 		case WM_KEYDOWN:
 		case WM_KEYUP:
 		case WM_CHAR:
@@ -1813,6 +1819,10 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			}
 			break;
 		}
+		case WM_NCPAINT:
+		{
+			return 0;
+		}
 		case WM_ERASEBKGND:
 		{
 			return 1;
@@ -1842,7 +1852,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			return 0;
 		}
 		// make sure we catch all appropriate skin changes
-		case WM_USER + 0x202:	// WM_DISPLAYCHANGE / IPC_SKIN_CHANGED_NEW / ML_MSG_SKIN_CHANGED
+		case WM_USER + 0x202:	// WM_DISPLAYCHANGE / IPC_SKIN_CHANGED_NEW
 		{
 			ProcessSkinChange();
 			break;
@@ -1868,8 +1878,8 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 				yPos = (short)rc.top;
 			}
 
-			ProcessMenuResult(TrackPopup(popup, TPM_LEFTALIGN | TPM_LEFTBUTTON |
-							  TPM_RIGHTBUTTON | TPM_RETURNCMD, xPos, yPos, hWnd), hWnd);
+			ProcessMenuResult(TrackPopup(popup, TPM_RIGHTBUTTON | TPM_RETURNCMD,
+										 xPos, yPos, hWnd), hWnd);
 
 			DestroyMenu(hMenu);
 			break;
@@ -1906,6 +1916,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 				break;
 			}
 		}
+		[[fallthrough]];
 		case WM_LBUTTONUP:
 		{
 			if (bIsCurrent)
@@ -1951,7 +1962,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 				xOldPos = xPos;
 				yOldPos = yPos;
 
-				const int lengthInMS = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() : GetFileLength());
+				const int lengthInMS = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() : GetFileLengthMilliseconds());
 				if (lengthInMS > 0)
 				{
 					// ensures we'll get a WM_MOUSELEAVE 
@@ -1986,6 +1997,12 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		}
 		case WM_DESTROY:
 		{
+			if (IsWindow(hWndToolTip))
+			{
+				DestroyWindow(hWndToolTip);
+				hWndToolTip = NULL;
+			}
+
 			if (WASABI_API_APP != NULL)
 			{
 				WASABI_API_APP->app_removeAccelerators(hWnd);
@@ -2097,7 +2114,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 
 				// finally we add menu items to the main right-click menu and the views menu
 				// with Modern skins which support showing the views menu for accessing windows
-				AddEmbeddedWindowToMenus(TRUE, WINAMP_WAVEFORM_SEEK_MENUID, WASABI_API_LNGSTRINGW(IDS_WAVEFORM_SEEKER), -1);
+				AddEmbeddedWindowToMenus(TRUE, WINAMP_WAVEFORM_SEEK_MENUID, WASABI_API_LNGSTRINGW(IDS_WAVEFORM_SEEKER_MENU), -1);
 
 				// now we will attempt to create an embedded window which adds its own main menu entry
 				// and related keyboard accelerator (like how the media library window is integrated)
@@ -2151,6 +2168,16 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				WASABI_API_LNGSTRINGW_BUF(IDS_WAVEFORM_UNAVAILABLE_BAD_PLUGIN, szBadPlugin, ARRAYSIZE(szBadPlugin));
 				WASABI_API_LNGSTRINGW_BUF(IDS_STREAMS_NOT_SUPPORTED, szStreamsNotSupported, ARRAYSIZE(szStreamsNotSupported));
 				WASABI_API_LNGSTRINGW_BUF(IDS_TRY_LEGACY_MODE, szLegacy, ARRAYSIZE(szLegacy));
+
+				// Note: WASABI_API_APP->app_addAccelerators(..) requires Winamp 5.53 and higher
+				//       otherwise if you want to support older clients then you could use the
+				//       IPC_TRANSLATEACCELERATOR callback api which works for v5.0 upto v5.52
+				ACCEL accel = { FVIRTKEY | FALT, 'R', (WORD)WINAMP_WAVEFORM_SEEK_MENUID };
+				HACCEL hAccel = CreateAcceleratorTable(&accel, 1);
+				if (hAccel)
+				{
+					plugin.app->app_addAccelerators(hWndInner, &hAccel, 1, TRANSLATE_MODE_GLOBAL);
+				}
 
 				// Winamp can report if it was started minimised which allows us to control our window
 				// to not properly show on startup otherwise the window will appear incorrectly when it
@@ -2243,7 +2270,8 @@ void PluginConfig()
 
 	SetupConfigMenu(popup);
 
-	ProcessMenuResult(TrackPopupMenu(popup, TPM_RETURNCMD | TPM_LEFTBUTTON, r.left, r.top, 0, list, NULL), list);
+	ProcessMenuResult(TrackPopupMenu(popup, TPM_RETURNCMD, r.left,
+									 r.top, 0, list, NULL), list);
 
 	DestroyMenu(hMenu);
 }
@@ -2258,22 +2286,16 @@ void PluginQuit()
 
 	if (no_uninstall)
 	{
-		/*SaveNativeIniInt(WINAMP_INI, L"Waveseek",
-						   L"PosX", embed.r.left);
-		SaveNativeIniInt(WINAMP_INI, L"Waveseek",
-						 L"PosY", embed.r.top);
-		SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"SizeX",
-						 (embed.r.right - embed.r.left));
-		SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"SizeY",
-						 (embed.r.bottom - embed.r.top));*/
 		DestroyEmbeddedWindow(&embed);
 	}
 
 	if (IsWindow(hWndWaveseek))
 	{
 		KillTimer(hWndWaveseek, TIMER_ID);
-		DestroyWindow(hWndToolTip);
-		DestroyWindow(hWndWaveseek);
+
+		// the wacup core will trigger this
+		// to happen so it should all be ok
+		//DestroyWindow(hWndWaveseek);
 	}
 
 	if (FileExists(szTempDLLDestination))
