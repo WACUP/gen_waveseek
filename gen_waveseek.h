@@ -6,7 +6,7 @@ int DummyDSPDoSamples(short int *samples, int numsamples, int bps, int nch, int 
 Out_Module* CreateOutput(HWND, HINSTANCE);
 void DestroyOutput();
 
-#define SAMPLE_BUFFER_SIZE 4096
+#define SAMPLE_BUFFER_SIZE 4096ULL
 
 extern winampGeneralPurposePlugin plugin;
 extern unsigned short pSampleBuffer[SAMPLE_BUFFER_SIZE];

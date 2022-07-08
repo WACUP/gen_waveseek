@@ -911,16 +911,9 @@ LPWSTR GetTooltipText(HWND hWnd, int pos, int lengthInMS)
 
 int GetFileLengthMilliseconds(void)
 {
-	basicFileInfoStructW bfiW = { 0 };
-	bfiW.filename = szFilename;
-	if (!GetBasicFileInfo(&bfiW, TRUE))
-	{
-		if (bfiW.length != -1)
-		{
-			return (bfiW.length * 1000);
-		}
-	}
-	return -1000;
+	basicFileInfoStructW bfiW = { szFilename, 0, -1, NULL, 0 };
+	GetBasicFileInfo(&bfiW, TRUE);
+	return ((bfiW.length > -1) ? (bfiW.length * 1000) : -1000);
 }
 
 const int get_cpu_procs(void)
@@ -2236,7 +2229,7 @@ int PluginInit(void)
 
 		wchar_t	pluginTitleW[256] = { 0 };
 		StringCchPrintf(pluginTitleW, ARRAYSIZE(pluginTitleW), WASABI_API_LNGSTRINGW(IDS_PLUGIN_NAME), TEXT(PLUGIN_VERSION));
-		plugin.description = (char*)_wcsdup(pluginTitleW);
+		plugin.description = (char*)plugin.memmgr->sysDupStr(pluginTitleW);
 
 		// restore / process the current file so we're showing something on load
 		// but we delay it a bit until Winamp is in a better state especially if

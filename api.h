@@ -7,6 +7,8 @@
 
 #include <api/service/waServiceFactory.h>
 
+#include <api/memmgr/api_memmgr.h>
+
 #include <Agave/Language/api_language.h>
 
 #include <Agave/DecodeFile/api_decodefile2.h>
