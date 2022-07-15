@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.9.7"
+#define PLUGIN_VERSION "3.9.9"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -15,8 +15,11 @@
 #include <math.h>
 #include <winamp/in2.H>
 #include <winamp/gen.h>
+#ifdef WACUP_BUILD
 #include <winamp/wa_cup.h>
+#else
 #include <winamp/wa_ipc.h>
+#endif
 #include <winamp/ipc_pe.h>
 #include <gen_ml/ml.h>
 #include <gen_ml/ml_ipc_0313.h>
@@ -279,7 +282,6 @@ void ClearProcessingHandles()
 typedef struct
 {
 	LPCWSTR filename;
-	ifc_audiostream *decoder;
 	AudioParameters parameters;
 } CalcThreadParams;
 
@@ -292,16 +294,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 #endif
 
 	CalcThreadParams *item = (CalcThreadParams *)lp;
-	if (item->decoder)
-	{
-		wchar_t szThreadWaveCacheFile[MAX_PATH] = { 0 };
-		unsigned long nAmplitude = 0, nSampleCount = 0;
-		unsigned int nFramePerWindow = 0, nBufferPointer = 0;
-		uint64_t nTotalSampleCount = 0;
-		unsigned short pThreadSampleBuffer[SAMPLE_BUFFER_SIZE] = { 0 };
-
-		SecureZeroMemory(pSampleBuffer, SAMPLE_BUFFER_SIZE * sizeof(unsigned short));
-		(void)StringCchCopy(szThreadWaveCacheFile, ARRAYSIZE(szThreadWaveCacheFile), szWaveCacheFile);
+	ifc_audiostream* decoder = NULL;
+	unsigned int nFramePerWindow = 0;
 
 		// there's been a number of cases where the metadata
 		// query is going to block with other requests so it
@@ -316,18 +310,26 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 			const int lengthMS = WStr2I(buf);
 			if (lengthMS > 0)
 			{
+			decoder = (WASABI_API_DECODEFILE2 ? WASABI_API_DECODEFILE2->OpenAudioBackground(item->filename, &item->parameters) : NULL);
+
+			if (decoder)
+			{
 				nFramePerWindow = MulDiv(lengthMS, item->parameters.sampleRate,
 										 SAMPLE_BUFFER_SIZE * 1000) + 1;
 			}
 		}
-		else
-		{
-			if (WASABI_API_DECODEFILE2)
-			{
-				WASABI_API_DECODEFILE2->CloseAudio(item->decoder);
-			}
-			goto abort;
 		}
+
+	if (decoder)
+	{
+		wchar_t szThreadWaveCacheFile[MAX_PATH] = { 0 };
+		unsigned long nAmplitude = 0, nSampleCount = 0;
+		unsigned int nBufferPointer = 0;
+		uint64_t nTotalSampleCount = 0;
+		unsigned short pThreadSampleBuffer[SAMPLE_BUFFER_SIZE] = { 0 };
+
+		SecureZeroMemory(pSampleBuffer, SAMPLE_BUFFER_SIZE * sizeof(unsigned short));
+		(void)StringCchCopy(szThreadWaveCacheFile, ARRAYSIZE(szThreadWaveCacheFile), szWaveCacheFile);
 
 		// ensure that the expected count will work with vary large files where there's
 		// millions & billions of samples otherwise it'll abort the rendering too soon!
@@ -344,7 +346,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		while (!kill_threads)
 		{
 			int error = 0;
-			const size_t bytesRead = item->decoder->ReadAudio((void *)data, buffer_size, &kill_threads, &error);
+			const size_t bytesRead = decoder->ReadAudio((void *)data, buffer_size, &kill_threads, &error);
 			if (error || kill_threads)
 			{
 				break;
@@ -408,7 +410,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 
 		if (WASABI_API_DECODEFILE2)
 		{
-			WASABI_API_DECODEFILE2->CloseAudio(item->decoder);
+			WASABI_API_DECODEFILE2->CloseAudio(decoder);
 		}
 
 		if (!kill_threads)
@@ -483,10 +485,8 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 		item->parameters.bitsPerSample = 24;
 		item->parameters.sampleRate = 44100;
 		item->filename = _wcsdup(szFn);
-		item->decoder = (WASABI_API_DECODEFILE2 ? WASABI_API_DECODEFILE2->OpenAudioBackground(item->filename, &item->parameters) : NULL);
-		if (item->decoder)
-		{
-			HANDLE CalcThread = CreateThread(0, 0, CalcWaveformThread, (LPVOID)
+
+			const HANDLE CalcThread = CreateThread(0, 0, CalcWaveformThread, (LPVOID)
 											 item, CREATE_SUSPENDED, NULL);
 			if (CalcThread)
 			{
@@ -496,14 +496,6 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 				bIsProcessing = true;
 				return CalcThread;
 			}
-			else
-			{
-				if (WASABI_API_DECODEFILE2)
-				{
-					WASABI_API_DECODEFILE2->CloseAudio(item->decoder);
-				}
-			}
-		}
 
 		free((LPVOID)item->filename);
 		free((LPVOID)item);
@@ -1120,7 +1112,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 		GetCursorPos(&pt);
 		ScreenToClient(hWndInner, &pt);
 		ti.lpszText = GetTooltipText(hWndInner, pt.x, lengthInMS);
-		SendMessage(hWndToolTip, TTM_SETTOOLINFO, 0, (LPARAM)&ti);
+		PostMessage(hWndToolTip, TTM_SETTOOLINFO, 0, (LPARAM)&ti);
 	}
 }
 
@@ -1795,7 +1787,8 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			if (IsWindow(hWndToolTip))
 			{
 				ti.cbSize = sizeof(TOOLINFO);
-				ti.uFlags = TTF_IDISHWND | TTF_TRACK | TTF_ABSOLUTE | TTF_TRANSPARENT;
+				ti.uFlags = TTF_IDISHWND | TTF_TRACK | TTF_ABSOLUTE |
+							TTF_TRANSPARENT | TTF_CENTERTIP;
 				ti.hwnd = (HWND)lParam;
 				ti.hinst = plugin.hDllInstance;
 				ti.uId = (UINT_PTR)lParam;
@@ -1969,17 +1962,20 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 					ClientToScreen(hWndWaveseek, &pt);
 					ti.lpszText = GetTooltipText(hWnd, xPos, lengthInMS);
 
-					SendMessage(hWndToolTip, TTM_TRACKACTIVATE, TRUE, (LPARAM)&ti);
-					SendMessage(hWndToolTip, TTM_SETTOOLINFO, 0, (LPARAM)&ti);
-					//SendMessage(hWndToolTip, TTM_TRACKPOSITION, 0, (LPARAM)MAKELONG(pt.x + 11, pt.y - 2));
-					SendMessage(hWndToolTip, TTM_TRACKPOSITION, 0, (LPARAM)MAKELONG(pt.x + 24, pt.y/* - 2*/));
+					RECT rt = { 0 };
+					GetClientRect(hWndToolTip, &rt);
+
+					PostMessage(hWndToolTip, TTM_TRACKACTIVATE, TRUE, (LPARAM)&ti);
+					PostMessage(hWndToolTip, TTM_SETTOOLINFO, 0, (LPARAM)&ti);
+					PostMessage(hWndToolTip, TTM_TRACKPOSITION, 0, (LPARAM)MAKELONG(
+								pt.x + (WORD)((rt.right - rt.left) / 1.5f), pt.y));
 				}
 			}
 			break;
 		}
 		case WM_MOUSELEAVE:
 		{
-			SendMessage(hWndToolTip, TTM_TRACKACTIVATE, FALSE, (LPARAM)&ti);
+			PostMessage(hWndToolTip, TTM_TRACKACTIVATE, FALSE, (LPARAM)&ti);
 			break;
 		}
 		case WM_CLOSE:
