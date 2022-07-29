@@ -297,17 +297,31 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	ifc_audiostream* decoder = NULL;
 	unsigned int nFramePerWindow = 0;
 
-		// there's been a number of cases where the metadata
-		// query is going to block with other requests so it
-		// is simpler to add a bit of a wait for now to have
-		// this be more reliable in rendering a new file...
-		Sleep(100);
-
+	// try to get the appropriate value which will
+	// usually be pulled in from the local library
+	// database before trying the file itself. but
+	// that can sometimes fail due to file locking
+	// so it'll if needed fallback to the playlist
+	// information that's been stored for the item
+	// as something to work with to check it's ok.
+	int lengthMS = -1;
 		wchar_t buf[16] = { 0 };
 		if (GetExtendedFileInfoW(item->filename, L"length", buf,
 								 ARRAYSIZE(buf), NULL) && buf[0])
 		{
-			const int lengthMS = WStr2I(buf);
+		lengthMS = WStr2I(buf);
+	}
+	else
+	{
+		basicFileInfoStructW bfiW = { item->filename, 0, -1, NULL, 0 };
+		if (GetBasicFileInfo(&bfiW, TRUE, TRUE))
+		{
+			lengthMS = (bfiW.length * 1000);
+		}
+	}
+
+	// without a valid length we've not got much
+	// chance of reliably processing this file
 			if (lengthMS > 0)
 			{
 			decoder = (WASABI_API_DECODEFILE2 ? WASABI_API_DECODEFILE2->OpenAudioBackground(item->filename, &item->parameters) : NULL);
@@ -317,7 +331,6 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 				nFramePerWindow = MulDiv(lengthMS, item->parameters.sampleRate,
 										 SAMPLE_BUFFER_SIZE * 1000) + 1;
 			}
-		}
 		}
 
 	if (decoder)
@@ -904,8 +917,7 @@ LPWSTR GetTooltipText(HWND hWnd, int pos, int lengthInMS)
 int GetFileLengthMilliseconds(void)
 {
 	basicFileInfoStructW bfiW = { szFilename, 0, -1, NULL, 0 };
-	GetBasicFileInfo(&bfiW, TRUE);
-	return ((bfiW.length > -1) ? (bfiW.length * 1000) : -1000);
+	return (GetBasicFileInfo(&bfiW, TRUE, TRUE) ? (bfiW.length * 1000) : -1000);
 }
 
 const int get_cpu_procs(void)
