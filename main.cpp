@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.9.9"
+#define PLUGIN_VERSION "3.9.13"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -282,6 +282,7 @@ void ClearProcessingHandles()
 typedef struct
 {
 	LPCWSTR filename;
+	INT_PTR db_error;
 	AudioParameters parameters;
 } CalcThreadParams;
 
@@ -306,8 +307,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	// as something to work with to check it's ok.
 	int lengthMS = -1;
 		wchar_t buf[16] = { 0 };
-		if (GetExtendedFileInfoW(item->filename, L"length", buf,
-								 ARRAYSIZE(buf), NULL) && buf[0])
+	extendedFileInfoStructW efis = { item->filename, L"length", buf, ARRAYSIZE(buf) };
+	if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL, &item->db_error) && buf[0])
 		{
 		lengthMS = WStr2I(buf);
 	}
@@ -481,7 +482,7 @@ abort:
 	return 0;
 }
 
-HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
+HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_PTR db_error)
 {
 	pModule = NULL;
 
@@ -493,6 +494,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 		CalcThreadParams *item = (CalcThreadParams *)calloc(1, sizeof(CalcThreadParams));
 		if (item)
 		{
+			item->db_error = db_error;
 		item->parameters.flags = AUDIOPARAMETERS_MAXCHANNELS | AUDIOPARAMETERS_MAXSAMPLERATE | AUDIOPARAMETERS_NO_RESAMPLE;
 		item->parameters.channels = 2;
 		item->parameters.bitsPerSample = 24;
@@ -641,15 +643,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing)
 
 			if (FileExists(szTempDLLDestination))
 			{
-				hDLL = GetModuleHandle(szTempDLLDestination);
-				if (!hDLL)
-				{
-					hDLL = LoadLibrary(szTempDLLDestination);
-				}
-				if (!hDLL)
-				{
-					hDLL = LoadLibraryEx(szTempDLLDestination, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR);
-				}
+				hDLL = GetOrLoadModuleHandle(szTempDLLDestination, NULL);
 				if (!hDLL)
 				{
 					return NULL;
@@ -965,7 +959,9 @@ BOOL AllowedFile(const wchar_t * szFn)
 			if (!_wcsicmp(extension, L"2sf") || !_wcsicmp(extension, L"mini2sf") ||
 				!_wcsicmp(extension, L"gsf") || !_wcsicmp(extension, L"minigsf") ||
 				!_wcsicmp(extension, L"ncsf") || !_wcsicmp(extension, L"minincsf") ||
-				!_wcsicmp(extension, L"snsf") || !_wcsicmp(extension, L"minisnsf"))
+			!_wcsicmp(extension, L"qsf") || !_wcsicmp(extension, L"minisqsf") ||
+			!_wcsicmp(extension, L"snsf") || !_wcsicmp(extension, L"minisnsf") ||
+			!_wcsicmp(extension, L"spc") || plugin.albumart->CanLoad(szFn))
 			{
 				return FALSE;
 			}
@@ -1064,11 +1060,12 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 
 				// if enabled then only process audio only files
 				// as pocessing video can cause some problems...
+				INT_PTR db_error = FALSE;
 				if (audioOnly)
 				{
 					wchar_t buf[4] = { 0 };
-					if (GetExtendedFileInfoW(usable_path, L"type", buf,
-											 ARRAYSIZE(buf), NULL) && buf[0])
+					extendedFileInfoStructW efis = { usable_path, L"type", buf, ARRAYSIZE(buf) };
+					if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL, &db_error) && buf[0])
 					{
 						if (WStr2I(buf) == 1)
 						{
@@ -1084,7 +1081,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 				static const int cpu_count = get_cpu_procs();
 				if (processing_list.size() < cpu_count)
 				{
-					HANDLE thread = StartProcessingFile(usable_path, start_playing);
+					HANDLE thread = StartProcessingFile(usable_path, start_playing, db_error);
 					if (thread != NULL)
 					{
 						processing_list[std::wstring(usable_path)] = thread;

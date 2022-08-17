@@ -17,4 +17,6 @@
 
 #include <Agave/Metadata/api_metadata2.h>
 
+#include <Agave/AlbumArt/api_albumart.h>
+
 #endif
