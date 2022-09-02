@@ -351,7 +351,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 													* 1ULL * item->parameters.channels);
 		const int padded_bits = (((item->parameters.bitsPerSample + 7) & (~7)) / 8);
 		const size_t buffer_size = (1152 * item->parameters.channels * padded_bits);
-		char *data = (char *)calloc(buffer_size, sizeof(char));
+		char *data = (char *)plugin.memmgr->sysMalloc(buffer_size);
 		if (!data)
 		{
 			goto abort;
@@ -420,7 +420,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 			}
 		}
 
-		free(data);
+		plugin.memmgr->sysFree(data);
 
 		if (WASABI_API_DECODEFILE2)
 		{
@@ -477,8 +477,8 @@ abort:
 		MessageBox(plugin.hwndParent, profile, 0, 0);
 	}
 #endif
-	free((LPVOID)item->filename);
-	free((LPVOID)item);
+	plugin.memmgr->sysFree((LPVOID)item->filename);
+	plugin.memmgr->sysFree((LPVOID)item);
 	return 0;
 }
 
@@ -491,7 +491,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 	// popular formats (as long as the input plug-in has support for it)
 	if (WASABI_API_DECODEFILE2 && WASABI_API_DECODEFILE2->DecoderExists(szFn))
 	{
-		CalcThreadParams *item = (CalcThreadParams *)calloc(1, sizeof(CalcThreadParams));
+		CalcThreadParams *item = (CalcThreadParams *)plugin.memmgr->sysMalloc(sizeof(CalcThreadParams));
 		if (item)
 		{
 			item->db_error = db_error;
@@ -499,7 +499,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 		item->parameters.channels = 2;
 		item->parameters.bitsPerSample = 24;
 		item->parameters.sampleRate = 44100;
-		item->filename = _wcsdup(szFn);
+			item->filename = plugin.memmgr->sysDupStr((wchar_t*)szFn);
 
 			const HANDLE CalcThread = CreateThread(0, 0, CalcWaveformThread, (LPVOID)
 											 item, CREATE_SUSPENDED, NULL);
@@ -512,8 +512,8 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 				return CalcThread;
 			}
 
-		free((LPVOID)item->filename);
-		free((LPVOID)item);
+			plugin.memmgr->sysFree((LPVOID)item->filename);
+			plugin.memmgr->sysFree((LPVOID)item);
 	}
 	}
 
@@ -813,7 +813,7 @@ void LoadCUE(wchar_t * szFn)
 	while (fgetws(strs, 256, f))
 	{
 		wchar_t *str = strs;
-		while (iswspace(*str))
+		while ((*str == L' ') || (*str == L'\r') || (*str == L'\n'))
 		{
 			++str;
 		}
@@ -956,12 +956,12 @@ BOOL AllowedFile(const wchar_t * szFn)
 			// for extensions that we know are going to trigger plug-ins that are
 			// known to not be thread safe then we'll crudely add them here so as
 			// avoid processing until (hopefully) those plug-ins can be improved!
-			if (!_wcsicmp(extension, L"2sf") || !_wcsicmp(extension, L"mini2sf") ||
-				!_wcsicmp(extension, L"gsf") || !_wcsicmp(extension, L"minigsf") ||
-				!_wcsicmp(extension, L"ncsf") || !_wcsicmp(extension, L"minincsf") ||
-			!_wcsicmp(extension, L"qsf") || !_wcsicmp(extension, L"minisqsf") ||
-			!_wcsicmp(extension, L"snsf") || !_wcsicmp(extension, L"minisnsf") ||
-			!_wcsicmp(extension, L"spc") || plugin.albumart->CanLoad(szFn))
+		if (SameStr(extension, L"2sf") || SameStr(extension, L"mini2sf") ||
+			SameStr(extension, L"gsf") || SameStr(extension, L"minigsf") ||
+			SameStr(extension, L"ncsf") || SameStr(extension, L"minincsf") ||
+			SameStr(extension, L"qsf") || SameStr(extension, L"minisqsf") ||
+			SameStr(extension, L"snsf") || SameStr(extension, L"minisnsf") ||
+			SameStr(extension, L"spc") || plugin.albumart->CanLoad(szFn))
 			{
 				return FALSE;
 			}
@@ -990,14 +990,14 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 			// to re-process (e.g. multiple clicks in the
 			// main playlist editor) then we try to filter
 			// out and keep going if it's the same file.
-			bIsCurrent = !_wcsicmp(usable_path, GetPlayingFilename(0));
+			bIsCurrent = SameStr(usable_path, GetPlayingFilename(0));
 			return;
 		}
 
 		ProcessStop();
 
 		bIsLoaded = bUnsupported = false;
-		bIsCurrent = !_wcsicmp(usable_path, GetPlayingFilename(0));
+		bIsCurrent = SameStr(usable_path, GetPlayingFilename(0));
 
 		(void)StringCchCopy(szFilename, ARRAYSIZE(szFilename), usable_path);
 
@@ -1005,7 +1005,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 
 		// make sure that it's valid and something we can process
 		if ((!IsPathURL(usable_path) && FilePathExists(usable_path) && AllowedFile(usable_path)) ||
-			(!_wcsnicmp(usable_path, L"zip://", 6) && AllowedFile(usable_path)))
+			(IsZipEntry(usable_path) && AllowedFile(usable_path)))
 		{
 			wchar_t szCue[MAX_PATH] = { 0 };
 			(void)StringCchCopy(szCue, ARRAYSIZE(szCue), usable_path);
@@ -1357,12 +1357,10 @@ void PaintWaveform(HDC hdc, RECT rc)
 				SetBkColor(cacheDC, clrBackground);
 				SetTextColor(cacheDC, clrGeneratingText);
 
-				DrawText(cacheDC, (!IsPathURL(szFilename) &&
-						 _wcsnicmp(szFilename, L"zip://", 6) ?
-						 (bUnsupported == 2 ? szBadPlugin :
-						 (bUnsupported == 3 ? szLegacy : szUnavailable)) :
-						 szStreamsNotSupported), -1, &rc, DT_CENTER |
-						 DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+				DrawText(cacheDC, (!IsPathURL(szFilename) && !IsZipEntry(szFilename) ?
+						 (bUnsupported == 2 ? szBadPlugin : (bUnsupported == 3 ?
+						 szLegacy : szUnavailable)) : szStreamsNotSupported), -1, &rc,
+						 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
 				SelectObject(cacheDC, old_font);
 		}
@@ -1407,7 +1405,7 @@ void PaintWaveform(HDC hdc, RECT rc)
 					for (int j = 0; j < ((w / 256) + 1); j++)
 					{
 						#define num_point 4096
-						LPPOINT points = (LPPOINT)calloc(num_point, sizeof(POINT));
+							LPPOINT points = (LPPOINT)plugin.memmgr->sysMalloc(num_point * sizeof(POINT));
 						if (points)
 						{
 						for (int i = 0; i < num_point ; i++)
@@ -1433,7 +1431,7 @@ void PaintWaveform(HDC hdc, RECT rc)
 								DeleteObject(rgn);
 							}
 						}
-							free(points);
+								plugin.memmgr->sysFree(points);
 						}
 					}
 
@@ -1565,7 +1563,7 @@ bool ProcessMenuResult(UINT command, HWND parent)
 		[[fallthrough]];
 		case ID_SUBMENU_RERENDER:
 		{
-			if (!IsPathURL(szFilename) || !_wcsnicmp(szFilename, L"zip://", 6))
+			if (!IsPathURL(szFilename) || IsZipEntry(szFilename))
 			{
 				// support the older & newer cache filenames
 				wchar_t filename[MAX_PATH] = { 0 };
