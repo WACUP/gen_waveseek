@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.9.13"
+#define PLUGIN_VERSION "3.9.14"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -119,13 +119,17 @@ wchar_t
 		szFilename[MAX_PATH] = { 0 },
 		szWaveCacheDir[MAX_PATH] = { 0 },
 		szWaveCacheFile[MAX_PATH] = { 0 },
+#ifndef _WIN64
 		szTempDLLDestination[MAX_PATH] = { 0 },
+#endif
 		szUnavailable[128] = { 0 },
 		szBadPlugin[128] = { 0 },
 		szStreamsNotSupported[128] = { 0 },
 		szLegacy[128] = { 0 };
 
+#ifndef _WIN64
 In_Module * pModule = NULL;
+#endif
 int nLengthInMS = 0, no_uninstall = 1, delay_load = -1;
 bool bIsCurrent = false, bIsProcessing = false, bIsLoaded = false;
 int bUnsupported = 0;
@@ -171,6 +175,7 @@ void GetFilePaths()
 	}
 }
 
+#ifndef _WIN64
 int GetFileInfo(const bool unicode, char* szFn, char szFile[MAX_PATH])
 {
 	wchar_t szTitle[GETFILEINFO_TITLE_LENGTH] = { 0 };
@@ -184,7 +189,6 @@ int GetFileInfo(const bool unicode, char* szFn, char szFile[MAX_PATH])
 	return lengthInMS;
 }
 
-#ifndef _WIN64
 void MPG123HotPatch(HINSTANCE module)
 {
 	struct
@@ -263,6 +267,8 @@ unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer, const unsig
 
 void ClearProcessingHandles()
 {
+	if (!processing_list.empty())
+	{
 	std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
 	while (itr != processing_list.end())
 	{
@@ -277,6 +283,7 @@ void ClearProcessingHandles()
 
 	// make sure we're good
 	processing_list.clear();
+}
 }
 
 typedef struct
@@ -484,7 +491,9 @@ abort:
 
 HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_PTR db_error)
 {
+#ifndef _WIN64
 	pModule = NULL;
+#endif
 
 	// first we try to use the decoder api which saves having to do any
 	// of the plug-in copying which is better and works with most of the
@@ -738,8 +747,9 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 	return NULL;
 }
 
-void ProcessStop()
+void ProcessStop(const bool is_closing = false)
 {
+#ifndef _WIN64
 	if (pModule)
 	{
 		if (bIsProcessing && pModule->Stop)
@@ -766,8 +776,17 @@ void ProcessStop()
 
 		pModule = NULL;
 	}
+#endif
 
+	if (!is_closing)
+	{
 	SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
+	}
+	else if (IsWindow(hWndWaveseek))
+	{
+		KillTimer(hWndWaveseek, TIMER_ID);
+	}
+
 	bIsProcessing = false;
 }
 
@@ -1580,8 +1599,7 @@ bool ProcessMenuResult(UINT command, HWND parent)
 					if (GetFilenameHash(szFilename, cacheFile))
 					{
 						StringCchCat(cacheFile, ARRAYSIZE(cacheFile), L".cache");
-						CombinePath(filename, szWaveCacheDir, cacheFile);
-						if (FileExists(filename))
+						if (CheckForPath(filename, szWaveCacheDir, cacheFile))
 						{
 							DeleteFile(filename);
 						}
@@ -2051,8 +2069,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				/*if (!GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"Migrate", 0))
 				{
 					wchar_t szOldWaveCacheDir[MAX_PATH] = { 0 };
-					CombinePath(szOldWaveCacheDir, szDLLPath, L"wavecache");
-					if (FileExists(szOldWaveCacheDir))
+					if (CheckForPath(szOldWaveCacheDir, szDLLPath, L"wavecache"))
 					{
 						wchar_t szFnFind[MAX_PATH] = { 0 };
 						CombinePath(szFnFind, szOldWaveCacheDir, L"*.cache");
@@ -2276,7 +2293,7 @@ void PluginQuit()
 {
 	kill_threads = 1;
 
-	ProcessStop();
+	ProcessStop(true);
 
 	ClearProcessingHandles();
 
@@ -2285,19 +2302,12 @@ void PluginQuit()
 		DestroyEmbeddedWindow(&embed);
 	}
 
-	if (IsWindow(hWndWaveseek))
-	{
-		KillTimer(hWndWaveseek, TIMER_ID);
-
-		// the wacup core will trigger this
-		// to happen so it should all be ok
-		//DestroyWindow(hWndWaveseek);
-	}
-
+#ifndef _WIN64
 	if (FileExists(szTempDLLDestination))
 	{
 		DeleteFile(szTempDLLDestination);
 	}
+#endif
 
 	if (clearOnExit)
 	{
