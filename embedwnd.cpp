@@ -160,6 +160,16 @@ void UpdateEmbeddedWindowsMenu(UINT menuId)
 	{
 		CheckMenuItem(windows_menu, menuId, check);
 	}
+
+	// if we're being shown then now's the time to give a nudge to things
+	// so the processing can be started if needed as we'll now prefer not
+	// doing anything if the window is intentionally closed especially on
+	// loading as it'll use less resources & seems to be the expectation.
+	if (visible)
+	{
+		extern int delay_load;
+		PostMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)2, delay_load);
+	}
 }
 
 BOOL SetEmbeddedWindowMinimizedMode(HWND embeddedWindow, BOOL fMinimized)

@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.9.14"
+#define PLUGIN_VERSION "3.10"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -82,11 +82,9 @@ UINT WINAMP_WAVEFORM_SEEK_MENUID = 0xa1bb;
 api_service *WASABI_API_SVC = NULL;
 api_decodefile2 *WASABI_API_DECODEFILE2 = NULL;
 api_application *WASABI_API_APP = NULL;
-api_language *WASABI_API_LNG = NULL;
 api_skin *WASABI_API_SKIN = NULL;
-// these two must be declared as they're used by the language api's
-// when the system is comparing/loading the different resources
-HINSTANCE WASABI_API_LNG_HINST = NULL, WASABI_API_ORIG_HINST = NULL;
+
+SETUP_API_LNG_VARS;
 
 void DummySAVSAInit(int maxlatency_in_ms, int srate) {}
 void DummySAVSADeInit() {}
@@ -305,6 +303,24 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	ifc_audiostream* decoder = NULL;
 	unsigned int nFramePerWindow = 0;
 
+	wchar_t buf[16] = { 0 };
+	extendedFileInfoStructW efis = { item->filename, (audioOnly ? L"type" :
+										  L"length"), buf, ARRAYSIZE(buf) };
+
+	// if enabled then only process audio only files
+	// as processing video can cause some problems...
+	if (audioOnly)
+	{
+		if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL,
+						&item->db_error) && !!WStr2I(buf))
+		{
+			goto abort;
+		}
+
+		efis.metadata = L"length";
+		buf[0] = 0;
+	}
+
 	// try to get the appropriate value which will
 	// usually be pulled in from the local library
 	// database before trying the file itself. but
@@ -313,9 +329,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	// information that's been stored for the item
 	// as something to work with to check it's ok.
 	int lengthMS = -1;
-		wchar_t buf[16] = { 0 };
-	extendedFileInfoStructW efis = { item->filename, L"length", buf, ARRAYSIZE(buf) };
-	if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL, &item->db_error) && buf[0])
+	if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL,
+							&item->db_error) && buf[0])
 		{
 		lengthMS = WStr2I(buf);
 	}
@@ -367,7 +382,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		while (!kill_threads)
 		{
 			int error = 0;
-			const size_t bytesRead = decoder->ReadAudio((void *)data, buffer_size, &kill_threads, &error);
+			const size_t bytesRead = decoder->ReadAudio((void *)data, buffer_size,
+															&kill_threads, &error);
 			if (error || kill_threads)
 			{
 				break;
@@ -390,8 +406,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 				for (int i = 0; i < (bytesRead / 2) && !kill_threads; i++)
 				{
 					const unsigned int nSample = abs(*(p++));
-					nAmplitude = AddThreadSample(item->filename, &pThreadSampleBuffer[0], nSample,
-												 nFramePerWindow, item->parameters.channels,
+					nAmplitude = AddThreadSample(item->filename, &pThreadSampleBuffer[0],
+												 nSample, nFramePerWindow, item->parameters.channels,
 												 nAmplitude, nSampleCount, nBufferPointer, nTotalSampleCount);
 				}
 			}
@@ -494,11 +510,13 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 #ifndef _WIN64
 	pModule = NULL;
 #endif
-
 	// first we try to use the decoder api which saves having to do any
 	// of the plug-in copying which is better and works with most of the
 	// popular formats (as long as the input plug-in has support for it)
-	if (WASABI_API_DECODEFILE2 && WASABI_API_DECODEFILE2->DecoderExists(szFn))
+	// though only doing it if the window is open otherwise it's a waste
+	// to do the processing if it's not going to be seen & resolves some
+	// user complaints related to the background processing hammering it
+	if (visible && WASABI_API_DECODEFILE2 && WASABI_API_DECODEFILE2->DecoderExists(szFn))
 	{
 		CalcThreadParams *item = (CalcThreadParams *)plugin.memmgr->sysMalloc(sizeof(CalcThreadParams));
 		if (item)
@@ -652,7 +670,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 
 			if (FileExists(szTempDLLDestination))
 			{
-				hDLL = GetOrLoadModuleHandle(szTempDLLDestination, NULL);
+				hDLL = GetOrLoadDll(szTempDLLDestination, NULL);
 				if (!hDLL)
 				{
 					return NULL;
@@ -1076,31 +1094,15 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 					++itr;
 				}
 
-
-				// if enabled then only process audio only files
-				// as pocessing video can cause some problems...
-				INT_PTR db_error = FALSE;
-				if (audioOnly)
-				{
-					wchar_t buf[4] = { 0 };
-					extendedFileInfoStructW efis = { usable_path, L"type", buf, ARRAYSIZE(buf) };
-					if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL, &db_error) && buf[0])
-					{
-						if (WStr2I(buf) == 1)
-						{
-							return;
-						}
-					}
-				}
-
 				// try to limit the number of files
 				// being processed at the same time
 				// to avoid causing some setups to
 				// hang due to quick 'next' actions
+				INT_PTR db_error = FALSE;
 				static const int cpu_count = get_cpu_procs();
 				if (processing_list.size() < cpu_count)
 				{
-					HANDLE thread = StartProcessingFile(usable_path, start_playing, db_error);
+					const HANDLE thread = StartProcessingFile(usable_path, start_playing, db_error);
 					if (thread != NULL)
 					{
 						processing_list[std::wstring(usable_path)] = thread;
@@ -1608,7 +1610,7 @@ bool ProcessMenuResult(UINT command, HWND parent)
 
 				SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
 				bIsProcessing = false;
-				kill_threads = 1;
+				//kill_threads = 1;
 
 				ProcessStop();
 
@@ -2175,8 +2177,6 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 					}
 				}
 
-				ProcessFilePlayback(GetPlayingFilename(0), FALSE);
-
 				WASABI_API_LNGSTRINGW_BUF(IDS_WAVEFORM_UNAVAILABLE, szUnavailable, ARRAYSIZE(szUnavailable));
 				WASABI_API_LNGSTRINGW_BUF(IDS_WAVEFORM_UNAVAILABLE_BAD_PLUGIN, szBadPlugin, ARRAYSIZE(szBadPlugin));
 				WASABI_API_LNGSTRINGW_BUF(IDS_STREAMS_NOT_SUPPORTED, szStreamsNotSupported, ARRAYSIZE(szStreamsNotSupported));
@@ -2208,12 +2208,13 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 					}
 				}*/
 			}
-			else if (wParam == 1)
+			else if ((wParam == 1) || (wParam == 2))
 			{
 				// allow new threads to be spawned
 				// after we've cleaned up existing
 				kill_threads = 0;
-				ProcessFilePlayback(szFilename, TRUE);
+				ProcessFilePlayback(((wParam == 1) ? szFilename :
+									GetPlayingFilename(0)), TRUE);
 			}
 		}
 	}
