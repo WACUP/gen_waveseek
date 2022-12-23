@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.10"
+#define PLUGIN_VERSION "3.10.2"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -951,16 +951,6 @@ int GetFileLengthMilliseconds(void)
 	return (GetBasicFileInfo(&bfiW, TRUE, TRUE) ? (bfiW.length * 1000) : -1000);
 }
 
-const int get_cpu_procs(void)
-{
-	static SYSTEM_INFO sysinfo = { 0 };
-	if (!sysinfo.dwNumberOfProcessors)
-{
-	GetSystemInfo(&sysinfo);
-	}
-	return sysinfo.dwNumberOfProcessors;
-}
-
 BOOL GetFilenameHash(LPCWSTR filename, LPWSTR cacheFile)
 {
 	// we generate a hash of the path (disk or stream)
@@ -1099,7 +1089,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 				// to avoid causing some setups to
 				// hang due to quick 'next' actions
 				INT_PTR db_error = FALSE;
-				static const int cpu_count = get_cpu_procs();
+				static const int cpu_count = GetCpuProcs();
 				if (processing_list.size() < cpu_count)
 				{
 					const HANDLE thread = StartProcessingFile(usable_path, start_playing, db_error);
@@ -1524,14 +1514,12 @@ void ClearCacheFolder(const bool mode)
 	{
 		WIN32_FIND_DATA wfd = { 0 };
 		wchar_t szFnFind[MAX_PATH] = { 0 };
-		CombinePath(szFnFind, szWaveCacheDir, (!i ? L"*.cache" : L"*.dll"));
-		HANDLE hFind = FindFirstFile(szFnFind, &wfd);
+		HANDLE hFind = FindFirstFile(CombinePath(szFnFind, szWaveCacheDir, (!i ? L"*.cache" : L"*.dll")), &wfd);
 		if (hFind != INVALID_HANDLE_VALUE)
 		{
 			do
 			{
-				CombinePath(szFnFind, szWaveCacheDir, wfd.cFileName);
-				DeleteFile(szFnFind);
+				DeleteFile(CombinePath(szFnFind, szWaveCacheDir, wfd.cFileName));
 			} while (FindNextFile(hFind, &wfd));
 			FindClose(hFind);
 		}
@@ -1797,9 +1785,18 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			}
 		}
 		[[fallthrough]];
+		case WM_SYSKEYDOWN:
+		case WM_SYSKEYUP:
+		case WM_SYSCHAR:
 		case WM_KEYDOWN:
 		case WM_KEYUP:
 		case WM_CHAR:
+		{
+			// this is needed to avoid it causing a beep
+			// due to it not being reported as unhandled
+			EatKeyPress();
+		}
+		[[fallthrough]];
 		case WM_MOUSEWHEEL:
 		{
 			PostMessage(plugin.hwndParent, uMsg, wParam, lParam);
@@ -2197,7 +2194,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				// is meant to remain hidden until Winamp is restored back into view correctly
 				if ((InitialShowState() == SW_SHOWMINIMIZED))
 				{
-					SetEmbeddedWindowMinimizedMode(hWndWaveseek, TRUE);
+					SetEmbeddedWindowMinimisedMode(hWndWaveseek, TRUE);
 				}
 				/*else
 				{
@@ -2267,7 +2264,6 @@ void PluginConfig()
 {
 	HMENU hMenu = WASABI_API_LOADMENUW(IDR_CONTEXTMENU);
 	HMENU popup = GetSubMenu(hMenu, 0);
-	RECT r = { 0 };
 
 	MENUITEMINFO i = {sizeof(i), MIIM_ID | MIIM_STATE | MIIM_TYPE, MFT_STRING, MFS_UNCHECKED | MFS_DISABLED, 1};
 	i.dwTypeData = (LPWSTR)plugin.description;
@@ -2276,16 +2272,13 @@ void PluginConfig()
 	// as we are re-using the same menu resource, we
 	// need to remove the options that are not global
 	DeleteMenu(popup, ID_SUBMENU_RERENDER, MF_BYCOMMAND);
-	DeleteMenu(popup, ID_SUBMENU_VIEWFILEINFO, MF_BYCOMMAND);
-
-	HWND list =	FindWindowEx(GetParent(GetFocus()), 0, L"SysListView32", 0);
-	ListView_GetItemRect(list, ListView_GetSelectionMark(list), &r, LVIR_BOUNDS);
-	ClientToScreen(list, (LPPOINT)&r);
 
 	SetupConfigMenu(popup);
 
-	ProcessMenuResult(TrackPopupMenu(popup, TPM_RETURNCMD, r.left,
-									 r.top, 0, list, NULL), list);
+	POINT pt = { 0 };
+	HWND list = GetPrefsListPos(&pt);
+	ProcessMenuResult(TrackPopupMenu(popup, TPM_RETURNCMD, pt.x,
+									 pt.y, 0, list, NULL), list);
 
 	DestroyMenu(hMenu);
 }

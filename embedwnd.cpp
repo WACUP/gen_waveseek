@@ -172,17 +172,17 @@ void UpdateEmbeddedWindowsMenu(UINT menuId)
 	}
 }
 
-BOOL SetEmbeddedWindowMinimizedMode(HWND embeddedWindow, BOOL fMinimized)
+bool SetEmbeddedWindowMinimisedMode(HWND embeddedWindow, const bool minimised)
 {
-	if (fMinimized == TRUE)
+	if (minimised == true)
 	{
 		return SetProp(embeddedWindow, MINIMISED_FLAG, (HANDLE)1);
 	}	
 	RemoveProp(embeddedWindow, MINIMISED_FLAG);
-	return TRUE;
+	return true;
 }
 
-BOOL EmbeddedWindowIsMinimizedMode(HWND embeddedWindow)
+bool EmbeddedWindowIsMinimisedMode(HWND embeddedWindow)
 {
 	return (GetProp(embeddedWindow, MINIMISED_FLAG) != 0);
 }
@@ -271,10 +271,10 @@ void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT_PTR menuId, em
 		{
 			// this is used to cope with Winamp being started minimised and will then
 			// re-show the example window when Winamp is being restored to visibility
-			if (EmbeddedWindowIsMinimizedMode(embedWnd))
+			if (EmbeddedWindowIsMinimisedMode(embedWnd))
 			{
 				PostMessage(embedWnd, WM_USER + (visible ? 102 : 105), 0, 0);
-				SetEmbeddedWindowMinimizedMode(embedWnd, FALSE);
+				SetEmbeddedWindowMinimisedMode(embedWnd, false);
 			}
 		}
 	}
