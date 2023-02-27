@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.10.2"
+#define PLUGIN_VERSION "3.10.4"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -309,7 +309,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 
 	// if enabled then only process audio only files
 	// as processing video can cause some problems...
-	if (audioOnly)
+	if (!kill_threads && audioOnly)
 	{
 		if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL,
 						&item->db_error) && !!WStr2I(buf))
@@ -329,6 +329,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	// information that's been stored for the item
 	// as something to work with to check it's ok.
 	int lengthMS = -1;
+	if (!kill_threads)
+	{
 	if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL,
 							&item->db_error) && buf[0])
 		{
@@ -341,6 +343,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		{
 			lengthMS = (bfiW.length * 1000);
 		}
+	}
 	}
 
 	// without a valid length we've not got much
@@ -516,7 +519,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 	// though only doing it if the window is open otherwise it's a waste
 	// to do the processing if it's not going to be seen & resolves some
 	// user complaints related to the background processing hammering it
-	if (visible && WASABI_API_DECODEFILE2 && WASABI_API_DECODEFILE2->DecoderExists(szFn))
+	if (!kill_threads && visible && WASABI_API_DECODEFILE2 && WASABI_API_DECODEFILE2->DecoderExists(szFn))
 	{
 		CalcThreadParams *item = (CalcThreadParams *)plugin.memmgr->sysMalloc(sizeof(CalcThreadParams));
 		if (item)
