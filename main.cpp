@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.10.4"
+#define PLUGIN_VERSION "3.11.1"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -77,7 +77,7 @@ int on_click = 0, clickTrack = 1, showCuePoints = 0,
 #endif
 	audioOnly = 1, hideTooltip = 0, debug = 0,
 	kill_threads = 0, lowerpriority = 0, clearOnExit = 0;
-UINT WINAMP_WAVEFORM_SEEK_MENUID = 0xa1bb;
+UINT WINAMP_WAVEFORM_SEEK_MENUID = 0xa1bb, timer_id = 0;
 
 api_service *WASABI_API_SVC = NULL;
 api_decodefile2 *WASABI_API_DECODEFILE2 = NULL;
@@ -103,6 +103,7 @@ LRESULT CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 #endif
 
 void FinishProcessingFile(LPCWSTR szCacheFile, unsigned short *pBuffer);
+void ProcessStop(const bool is_closing = false);
 
 typedef In_Module *(*PluginGetter)();
 
@@ -488,8 +489,10 @@ abort:
 
 		if (!processing_list.size())
 		{
-			SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
-			bIsProcessing = false;
+			// start or stop the timer
+			// as needed based on the
+			// current playback state
+			ProcessStop();
 		}
 	}
 
@@ -537,7 +540,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 			{
 				SetThreadPriority(CalcThread, (!lowerpriority ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_LOWEST));
 				ResumeThread(CalcThread);
-				SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
+				timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
 				bIsProcessing = true;
 				return CalcThread;
 			}
@@ -753,7 +756,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 						return NULL;
 					}
 
-					SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
+					timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
 					bIsProcessing = true;
 				}
 			}
@@ -768,7 +771,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 	return NULL;
 }
 
-void ProcessStop(const bool is_closing = false)
+void ProcessStop(const bool is_closing)
 {
 #ifndef _WIN64
 	if (pModule)
@@ -799,13 +802,20 @@ void ProcessStop(const bool is_closing = false)
 	}
 #endif
 
-	if (!is_closing)
+	if (!is_closing && !!GetPlayingState())
 	{
-	SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
+		timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
 	}
-	else if (IsWindow(hWndWaveseek))
+	else if (IsWindow(hWndInner))
 	{
-		KillTimer(hWndWaveseek, TIMER_ID);
+		KillTimer(hWndInner, TIMER_ID);
+
+		if (timer_id)
+		{
+			InvalidateRect(hWndInner, NULL, FALSE);
+
+			timer_id = 0;
+		}
 	}
 
 	bIsProcessing = false;
@@ -1080,7 +1090,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 					// more processing / duplication
 					if (wcsistr(usable_path, (*itr).first.c_str()))
 					{
-						SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
+						timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
 						bIsProcessing = true;
 						return;
 					}
@@ -1103,7 +1113,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 				}
 				else
 				{
-					SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
+					timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
 					bIsProcessing = true;
 					return;
 				}
@@ -1599,7 +1609,7 @@ bool ProcessMenuResult(UINT command, HWND parent)
 					}
 				}
 
-				SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
+				timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
 				bIsProcessing = false;
 				//kill_threads = 1;
 
@@ -1851,7 +1861,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		case WM_PAINT:
 		{
 			PAINTSTRUCT psPaint = { 0 };
-			HDC hdc = BeginPaint(hWnd, &psPaint);
+			const HDC hdc = ((kill_threads != 2) ? BeginPaint(hWnd, &psPaint) : NULL);
 			if (hdc)
 			{
 			// we get the client area instead of
@@ -2042,6 +2052,16 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 			GetFilePaths();
 			ProcessFilePlayback((const wchar_t*)wParam, TRUE);
 		}
+		else if (lParam == IPC_STOPPLAYING)
+		{
+			// if we're doing a proper stop then we're best
+			// turning off the timer as long as there's not
+			// processing still happening to lower idle cpu
+			if (timer_id && !bIsProcessing)
+			{
+				ProcessStop(((const stopPlayingInfoStructEx*)wParam)->is_closing);
+			}
+		}
 		else if ((lParam == IPC_PLITEM_SELECTED_CHANGED) && clickTrack)
 		{
 			// art change to show the selected item in the playlist editor
@@ -2049,6 +2069,10 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 			// needing to be set back to the current item if there's none
 			ProcessFilePlayback(((wParam > 0) ? GetPlaylistItemFile((wParam - 1)) :
 												GetPlayingFilename(0)), FALSE);
+			if (!timer_id)	// deal with no playback to
+			{				// ensure the window update
+				InvalidateRect(hWndInner, NULL, FALSE);
+			}
 		}
 		else if (lParam == IPC_GET_EMBEDIF_NEW_HWND)
 		{
@@ -2288,7 +2312,7 @@ void PluginConfig()
 
 void PluginQuit()
 {
-	kill_threads = 1;
+	kill_threads = 2;
 
 	ProcessStop(true);
 
