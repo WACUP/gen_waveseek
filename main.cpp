@@ -1269,7 +1269,7 @@ void ProcessSkinChange(BOOL skip_refresh = FALSE)
 
 	if (!skip_refresh)
 	{
-		InvalidateRect(hWndWaveseek, NULL, FALSE);
+		InvalidateRect(hWndInner, NULL, FALSE);
 	}
 
 	MLSkinnedWnd_SkinChanged(hWndToolTip, FALSE, FALSE);
