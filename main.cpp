@@ -377,7 +377,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 													* 1ULL * item->parameters.channels);
 		const int padded_bits = (((item->parameters.bitsPerSample + 7) & (~7)) / 8);
 		const size_t buffer_size = (1152 * item->parameters.channels * padded_bits);
-		char *data = (char *)plugin.memmgr->sysMalloc(buffer_size);
+		char* data = (char*)plugin.memmgr->sysMalloc(buffer_size * 2);	// *2 deals with bad calls
 		if (!data)
 		{
 			goto abort;
@@ -1817,10 +1817,8 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		}
 		case WM_CREATE:
 		{
-			hWndToolTip = CreateWindowEx(WS_EX_TOPMOST, TOOLTIPS_CLASSW, NULL, WS_POPUP |
-										 TTS_NOPREFIX | TTS_ALWAYSTIP, CW_USEDEFAULT,
-										 CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-										 hWnd, NULL, plugin.hDllInstance, NULL);
+			hWndToolTip = CreateWindowEx(WS_EX_TOPMOST, TOOLTIPS_CLASSW, NULL, WS_POPUP | TTS_NOPREFIX |
+										 TTS_ALWAYSTIP, 0, 0, 0, 0, hWnd, NULL, plugin.hDllInstance, NULL);
 			if (IsWindow(hWndToolTip))
 			{
 				ti.cbSize = sizeof(TOOLINFO);
