@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.11.1"
+#define PLUGIN_VERSION "3.13"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -1539,6 +1539,17 @@ void ClearCacheFolder(const bool mode)
 	}
 }
 
+void RefreshInnerWindow(void)
+{
+	if (!timer_id)	// deal with no playback to
+	{				// ensure the window update
+		if (IsWindow(hWndInner))
+		{
+			InvalidateRect(hWndInner, NULL, FALSE);
+		}
+	}
+}
+
 bool ProcessMenuResult(UINT command, HWND parent)
 {
 	switch (LOWORD(command))
@@ -1659,6 +1670,7 @@ bool ProcessMenuResult(UINT command, HWND parent)
 				}
 			}
 			ProcessFilePlayback(GetPlaylistItemFile(index), FALSE);
+			RefreshInnerWindow();
 			break;
 		}
 		case ID_SUBMENU_SHOWCUEPOINTS:
@@ -2060,6 +2072,25 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				ProcessStop(((const stopPlayingInfoStructEx*)wParam)->is_closing);
 			}
 		}
+		else if ((lParam == IPC_CB_MISC) && ((wParam == IPC_CB_MISC_TITLE) ||
+											 (wParam == IPC_CB_MISC_STATUS)))
+		{
+			// update as needed to match the new setting
+			// with fallback to the current playing if
+			// there's no selection or it's been disabled
+			int index = GetPlaylistPosition();
+			if (clickTrack && GetSelectedCount())
+			{
+				const int sel = GetNextSelected((WPARAM)-1);
+				if (sel != -1)
+				{
+					index = sel;
+				}
+			}
+
+			ProcessFilePlayback(GetPlaylistItemFile(index), FALSE);
+			RefreshInnerWindow();
+		}
 		else if ((lParam == IPC_PLITEM_SELECTED_CHANGED) && clickTrack)
 		{
 			// art change to show the selected item in the playlist editor
@@ -2067,10 +2098,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 			// needing to be set back to the current item if there's none
 			ProcessFilePlayback(((wParam > 0) ? GetPlaylistItemFile((wParam - 1)) :
 												GetPlayingFilename(0)), FALSE);
-			if (!timer_id)	// deal with no playback to
-			{				// ensure the window update
-				InvalidateRect(hWndInner, NULL, FALSE);
-			}
+			RefreshInnerWindow();
 		}
 		else if (lParam == IPC_GET_EMBEDIF_NEW_HWND)
 		{
@@ -2238,6 +2266,13 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				ProcessFilePlayback(((wParam == 1) ? szFilename :
 									GetPlayingFilename(0)), TRUE);
 			}
+		}
+		else if (lParam == IPC_WACUP_HAS_LOADED)
+		{
+			// used to help avoid some initial load painting issues
+			// which is more of an issue with wine since wacup with
+			// it's non-legacy mode has become the default instance
+			timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
 		}
 	}
 
