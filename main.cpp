@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.13"
+#define PLUGIN_VERSION "3.14"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -6,7 +6,10 @@
 #include <windowsx.h>
 #include <shlwapi.h>
 #ifdef USE_GDIPLUS
+#pragma warning(push)
+#pragma warning(disable:4458) // declaration of 'xxx' hides class member
 #include <gdiplus.h>
+#pragma warning(pop)
 #pragma comment(lib, "gdiplus.lib")
 #endif
 #include <string>
@@ -1275,252 +1278,6 @@ void ProcessSkinChange(BOOL skip_refresh = FALSE)
 	MLSkinnedWnd_SkinChanged(hWndToolTip, FALSE, FALSE);
 }
 
-void PaintWaveform(HDC hdc, RECT rc)
-{
-	const int nSongPos = (bIsCurrent ? GetCurrentTrackPos() : 0),
-			  nSongLen = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() : GetFileLengthMilliseconds()),
-			  nBufPos = (nSongLen != -1 ? MulDiv(nSongPos, SAMPLE_BUFFER_SIZE, nSongLen) : 0),
-			  h = (rc.bottom - rc.top);
-	int w = (rc.right - rc.left);
-	const RECT wnd = { 0, 0, w, h };
-
-	// it's a bit quicker to make use of a cached dc instead of making
-	// one for every paint event so we'll check if our cached dc is ok
-	// for the size of the window it needs to be painted or re-create
-	if (!cacheDC || memcmp(&lastWnd, &wnd, sizeof(RECT)))
-	{
-		const HDC oldCacheDC = cacheDC;
-		cacheDC = CreateCompatibleDC(hdc);
-
-		if (cacheBMP)
-		{
-			DeleteObject(cacheBMP);
-		}
-		cacheBMP = CreateCompatibleBitmap(hdc, w, h);
-
-		DeleteObject(SelectObject(cacheDC, cacheBMP));
-
-		if (oldCacheDC)
-		{
-			DeleteDC(oldCacheDC);
-		}
-
-		lastWnd = wnd;
-	}
-
-	const HBRUSH background = (clrBackgroundBrush ? clrBackgroundBrush :
-							   WADlg_getBrush(WADLG_ITEMBG_BRUSH));
-	FillRect(cacheDC, &rc, background);
-
-	if (paint_allowed)
-	{
-	if ((bIsLoaded || bIsProcessing) && !bUnsupported)
-	{
-		// make the width a bit less so the right-edge
-		// can allow for the end of the track to be
-		// correctly selected or the tooltip show up
-		--w;
-
-			SelectObject(cacheDC, GetStockObject(DC_PEN));
-
-		for (int i = 0; i < w; i++)
-		{
-			const int nBufLoc0 = ((i * SAMPLE_BUFFER_SIZE) / w),
-					  nBufLoc1 = min((((i + 1) * SAMPLE_BUFFER_SIZE) / w), SAMPLE_BUFFER_SIZE);
-
-				SetDCPenColor(cacheDC, ((nBufLoc0 < nBufPos) ?
-							  clrWaveformPlayed : clrWaveform));
-
-			unsigned short nSample = 0;
-			for (int j = nBufLoc0; j < nBufLoc1; j++)
-			{
-				nSample = max(pSampleBuffer[j], nSample);
-			}
-
-			const unsigned short sh = ((nSample * h) / 32767);
-			const int y = (h - sh) / 2;
-				MoveToEx(cacheDC, i, y, NULL);
-				LineTo(cacheDC, i, y + sh);
-
-			if (showCuePoints && (nCueTracks > 0))
-			{
-				unsigned int ms = MulDiv(i, nSongLen, w);
-				if (ms > 0)
-				{
-					for (int k = 0; k <= nCueTracks; k++)
-					{
-							if (!pCueTracks[k].bDrawn && (pCueTracks[k].nMillisec > 0) &&
-														 (pCueTracks[k].nMillisec < ms))
-						{
-							pCueTracks[k].bDrawn = true;
-								SetDCPenColor(cacheDC, clrCuePoint);
-								MoveToEx(cacheDC, i, y, NULL);
-								LineTo(cacheDC, i, h);
-								MoveToEx(cacheDC, i, y + sh, NULL);
-							break;
-						}
-					}
-				}
-			}
-		}
-
-		for (int k = 0; k < nCueTracks; k++)
-		{
-			pCueTracks[k].bDrawn = false;
-		}
-
-		// and now restore so that we get drawn correctly
-		++w;
-	}
-	else
-	{
-		if (debug)
-		{
-				const HFONT old_font = (HFONT)SelectObject(cacheDC, WADlg_getFont());
-
-				SetBkColor(cacheDC, clrBackground);
-				SetTextColor(cacheDC, clrGeneratingText);
-
-				DrawText(cacheDC, (!IsPathURL(szFilename) && !IsZipEntry(szFilename) ?
-						 (bUnsupported == 2 ? szBadPlugin : (bUnsupported == 3 ?
-						 szLegacy : szUnavailable)) : szStreamsNotSupported), -1, &rc,
-						 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-
-				SelectObject(cacheDC, old_font);
-		}
-		else
-		{
-			// make the width a bit less so the right-edge
-			// can allow for the end of the track to be
-			// correctly selected or the tooltip show up
-			--w;
-
-			const int y = h / 2;
-#ifdef USE_GDIPLUS
-			const bool plain = false;
-			if (plain)
-			{
-#endif
-				const HDC hdcMem2 = CreateCompatibleDC(hdc);
-				const HBITMAP hbmMem2 = CreateCompatibleBitmap(hdc, w, h),
-							  hbmOld2 = (HBITMAP)SelectObject(hdcMem2, hbmMem2);
-				FillRect(hdcMem2, &rc, background);
-
-				// draw a sine wave to indicate we're still
-				// there but that we've not got anything to
-				// show either from being missing / invalid
-				for (int k = 0; k < 2; k++)
-				{
-						const HDC thisdc = (!k ? cacheDC : hdcMem2);
-
-					SelectObject(thisdc, GetStockObject(DC_PEN));
-
-					// draw a base line in the middle of the window
-						SetDCPenColor(thisdc, (!nBufPos ? clrWaveformFailed : (!k ?
-												clrWaveform : clrWaveformPlayed)));
-					MoveToEx(thisdc, 0, y, NULL);
-
-					if (!k)
-					{
-						LineTo(thisdc, w, y);
-						MoveToEx(thisdc, 0, y, NULL);
-					}
-
-					for (int j = 0; j < ((w / 256) + 1); j++)
-					{
-						#define num_point 4096
-							LPPOINT points = (LPPOINT)plugin.memmgr->sysMalloc(num_point * sizeof(POINT));
-						if (points)
-						{
-						for (int i = 0; i < num_point ; i++)
-						{
-						   points[i].x = (j * 256) + ((i * 256) / num_point);
-						   points[i].y = (int)((h / 2.0f) * (1 - sin((4.0f * M_PI) * i / num_point)));
-						}
-
-						PolylineTo(thisdc, points, num_point);
-
-						// only fill in things when its needed
-						if (k && (nBufPos > 0))
-						{
-							HRGN rgn = CreatePolygonRgn(points, num_point, ALTERNATE/*/WINDING/**/);
-							if (rgn)
-							{
-								HBRUSH br = CreateSolidBrush(clrWaveformPlayed);
-								if (br)
-								{
-									FillRgn(thisdc, rgn, br);
-									DeleteObject(br);
-								}
-								DeleteObject(rgn);
-							}
-						}
-								plugin.memmgr->sysFree(points);
-						}
-					}
-
-					// ensure the middle line will show in playing mode
-					if (k && (nBufPos > 0))
-					{
-						SetDCPenColor(thisdc, clrWaveform);
-						MoveToEx(thisdc, 0, y, NULL);
-						LineTo(thisdc, w, y);
-					}
-				}
-
-				// only copy in things when its needed
-				if (nBufPos > 0)
-				{
-						BitBlt(cacheDC, 0, 0, MulDiv(nSongPos, w,
-							   nSongLen), h, hdcMem2, 0, 0, SRCCOPY);
-				}
-
-				SelectObject(hdcMem2, hbmOld2);
-				DeleteObject(hbmMem2);
-				DeleteDC(hdcMem2);
-#ifdef USE_GDIPLUS
-			}
-			else
-			{
-				Gdiplus::Graphics graphics(hdcMem);
-				Gdiplus::Pen *pen = new Gdiplus::Pen(Gdiplus::Color(GetRValue(clrWaveformFailed),
-													 GetGValue(clrWaveformFailed),
-													 GetBValue(clrWaveformFailed)));
-				if (pen)
-				{
-					graphics.DrawLine(pen, 0, y, w, y);
-
-					/*graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);/*/
-					graphics.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);/**/
-
-					// draw a sine wave to indicate we're still
-					// there but that we've not got anything to
-					// show either from being missing / invalid
-					for (int j = 0; j < (w / 256) + 1; j++)
-					{
-						#define num_point 4096
-						Gdiplus::PointF points[num_point];
-						for (int i = 0; i < num_point ; i++)
-						{
-						   points[i].X = (j * 256) + ((i * 256) / num_point);
-						   points[i].Y = (int)((h / 2.0f) * (1 - sinf((4.0f * M_PI) * i / num_point)));
-						}
-						graphics.DrawLines(pen, points, num_point);
-					}
-
-					delete pen;
-				}
-			}
-#endif
-
-			// and now restore so that we get drawn correctly
-			++w;
-		}
-	}
-	}
-	BitBlt(hdc, 0, 0, w, h, cacheDC, 0, 0, SRCCOPY);
-}
-
 void ClearCacheFolder(const bool mode)
 {
 	for (int i = 0; i < 1 + !!mode; i++)
@@ -1846,9 +1603,17 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		}
 		case WM_TIMER:
 		{
-			if ((wParam == TIMER_ID) && IsWindowVisible(hWnd))
+			if (wParam == TIMER_ID)
+			{
+				if (!bIsProcessing)
+				{
+					KillTimer(hWndInner, TIMER_ID);
+				}
+
+				if (IsWindowVisible(hWnd))
 			{
 				InvalidateRect(hWnd, NULL, FALSE);
+			}
 			}
 			break;
 		}
@@ -1877,9 +1642,256 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			// we get the client area instead of
 			// using the paint area as it's not
 			// the same if partially off-screen
-			RECT rc = { 0 };
-			GetClientRect(hWnd, &rc);
-			PaintWaveform(hdc, rc);
+				RECT wnd = { 0 };
+				GetClientRect(hWnd, &wnd);
+
+				const int nSongPos = (bIsCurrent ? GetCurrentTrackPos() : 0),
+						  nSongLen = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() :
+														   GetFileLengthMilliseconds()),
+						  nBufPos = (nSongLen != -1 ? MulDiv(nSongPos, SAMPLE_BUFFER_SIZE, nSongLen) : 0),
+						  h = (wnd.bottom - wnd.top);
+				int w = (wnd.right - wnd.left);
+
+				// it's a bit quicker to make use of a cached dc instead of making
+				// one for every paint event so we'll check if our cached dc is ok
+				// for the size of the window it needs to be painted or re-create
+				if (!cacheDC || memcmp(&lastWnd, &wnd, sizeof(RECT)))
+				{
+					const HDC oldCacheDC = cacheDC;
+					cacheDC = CreateCompatibleDC(hdc);
+
+					if (cacheBMP)
+					{
+						DeleteObject(cacheBMP);
+					}
+					cacheBMP = CreateCompatibleBitmap(hdc, w, h);
+
+					DeleteObject(SelectObject(cacheDC, cacheBMP));
+
+					if (oldCacheDC)
+					{
+						DeleteDC(oldCacheDC);
+					}
+
+					lastWnd = wnd;
+				}
+
+				const HBRUSH background = (clrBackgroundBrush ? clrBackgroundBrush :
+												WADlg_getBrush(WADLG_ITEMBG_BRUSH));
+				FillRect(cacheDC, &wnd, background);
+
+				if (paint_allowed)
+				{
+					if ((bIsLoaded || bIsProcessing) && !bUnsupported)
+					{
+						// make the width a bit less so the right-edge
+						// can allow for the end of the track to be
+						// correctly selected or the tooltip show up
+						--w;
+
+						SelectObject(cacheDC, GetStockObject(DC_PEN));
+
+						for (int i = 0; i < w; i++)
+						{
+							const int nBufLoc0 = ((i * SAMPLE_BUFFER_SIZE) / w),
+									  nBufLoc1 = min((((i + 1) * SAMPLE_BUFFER_SIZE) / w), SAMPLE_BUFFER_SIZE);
+
+							SetDCPenColor(cacheDC, ((nBufLoc0 < nBufPos) ?
+										  clrWaveformPlayed : clrWaveform));
+
+							unsigned short nSample = 0;
+							for (int j = nBufLoc0; j < nBufLoc1; j++)
+							{
+								nSample = max(pSampleBuffer[j], nSample);
+							}
+
+							const unsigned short sh = ((nSample * h) / 32767);
+							const int y = (h - sh) / 2;
+
+							if (sh)
+							{
+								MoveToEx(cacheDC, i, y, NULL);
+								LineTo(cacheDC, i, y + sh);
+							}
+
+							if (showCuePoints && (nCueTracks > 0))
+							{
+								unsigned int ms = MulDiv(i, nSongLen, w);
+								if (ms > 0)
+								{
+									for (int k = 0; k <= nCueTracks; k++)
+									{
+										if (!pCueTracks[k].bDrawn && (pCueTracks[k].nMillisec > 0) &&
+											(pCueTracks[k].nMillisec < ms))
+										{
+											pCueTracks[k].bDrawn = true;
+											SetDCPenColor(cacheDC, clrCuePoint);
+											MoveToEx(cacheDC, i, y, NULL);
+											LineTo(cacheDC, i, h);
+											MoveToEx(cacheDC, i, y + sh, NULL);
+											break;
+										}
+									}
+								}
+							}
+						}
+
+						for (int k = 0; k < nCueTracks; k++)
+						{
+							pCueTracks[k].bDrawn = false;
+						}
+
+						// and now restore so that we get drawn correctly
+						++w;
+					}
+					else
+					{
+						if (debug)
+						{
+							const HFONT old_font = (HFONT)SelectObject(cacheDC, WADlg_getFont());
+
+							SetBkColor(cacheDC, clrBackground);
+							SetTextColor(cacheDC, clrGeneratingText);
+
+							DrawText(cacheDC, (!IsPathURL(szFilename) && !IsZipEntry(szFilename) ?
+									 ((bUnsupported == 2) ? szBadPlugin : ((bUnsupported == 3) ?
+									 szLegacy : szUnavailable)) : szStreamsNotSupported), -1, &wnd,
+									 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+							SelectObject(cacheDC, old_font);
+						}
+						else
+						{
+							// make the width a bit less so the right-edge
+							// can allow for the end of the track to be
+							// correctly selected or the tooltip show up
+							--w;
+
+							const int y = h / 2;
+#ifdef USE_GDIPLUS
+							const bool plain = false;
+							if (plain)
+							{
+#endif
+								const HDC hdcMem2 = CreateCompatibleDC(hdc);
+								const HBITMAP hbmMem2 = CreateCompatibleBitmap(hdc, w, h),
+											  hbmOld2 = (HBITMAP)SelectObject(hdcMem2, hbmMem2);
+								FillRect(hdcMem2, &wnd, background);
+
+								// draw a sine wave to indicate we're still
+								// there but that we've not got anything to
+								// show either from being missing / invalid
+								for (int k = 0; k < 2; k++)
+								{
+									const HDC thisdc = (!k ? cacheDC : hdcMem2);
+
+									SelectObject(thisdc, GetStockObject(DC_PEN));
+
+									// draw a base line in the middle of the window
+									SetDCPenColor(thisdc, (!nBufPos ? clrWaveformFailed : (!k ?
+															clrWaveform : clrWaveformPlayed)));
+									MoveToEx(thisdc, 0, y, NULL);
+
+									if (!k)
+									{
+										LineTo(thisdc, w, y);
+										MoveToEx(thisdc, 0, y, NULL);
+									}
+
+									for (int j = 0; j < ((w / 256) + 1); j++)
+									{
+#define num_point 4096
+										LPPOINT points = (LPPOINT)plugin.memmgr->sysMalloc(num_point * sizeof(POINT));
+										if (points)
+										{
+											for (int i = 0; i < num_point; i++)
+											{
+												points[i].x = (j * 256) + ((i * 256) / num_point);
+												points[i].y = (int)((h / 2.0f) * (1 - sin((4.0f * M_PI) * i / num_point)));
+											}
+
+											PolylineTo(thisdc, points, num_point);
+
+											// only fill in things when its needed
+											if (k && (nBufPos > 0))
+											{
+												HRGN rgn = CreatePolygonRgn(points, num_point, ALTERNATE/*/WINDING/**/);
+												if (rgn)
+												{
+													HBRUSH br = CreateSolidBrush(clrWaveformPlayed);
+													if (br)
+													{
+														FillRgn(thisdc, rgn, br);
+														DeleteObject(br);
+													}
+													DeleteObject(rgn);
+												}
+											}
+											plugin.memmgr->sysFree(points);
+										}
+									}
+
+									// ensure the middle line will show in playing mode
+									if (k && (nBufPos > 0))
+									{
+										SetDCPenColor(thisdc, clrWaveform);
+										MoveToEx(thisdc, 0, y, NULL);
+										LineTo(thisdc, w, y);
+									}
+								}
+
+								// only copy in things when its needed
+								if (nBufPos > 0)
+								{
+									BitBlt(cacheDC, 0, 0, MulDiv(nSongPos, w,
+										   nSongLen), h, hdcMem2, 0, 0, SRCCOPY);
+								}
+
+								SelectObject(hdcMem2, hbmOld2);
+								DeleteObject(hbmMem2);
+								DeleteDC(hdcMem2);
+#ifdef USE_GDIPLUS
+							}
+							else
+							{
+								Gdiplus::Graphics graphics(cacheDC);
+								Gdiplus::Pen* pen = new Gdiplus::Pen(Gdiplus::Color(GetRValue(clrWaveformFailed),
+																					GetGValue(clrWaveformFailed),
+																					GetBValue(clrWaveformFailed)));
+								if (pen)
+								{
+									graphics.DrawLine(pen, 0, y, w, y);
+
+									/*graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);/*/
+									graphics.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);/**/
+
+									// draw a sine wave to indicate we're still
+									// there but that we've not got anything to
+									// show either from being missing / invalid
+									for (int j = 0; j < (w / 256) + 1; j++)
+									{
+#define num_point 4096
+										Gdiplus::PointF points[num_point];
+										for (int i = 0; i < num_point; i++)
+										{
+											points[i].X = (j * 256) + ((i * 256) / num_point);
+											points[i].Y = (int)((h / 2.0f) * (1 - sinf((4.0f * M_PI) * i / num_point)));
+										}
+										graphics.DrawLines(pen, points, num_point);
+									}
+
+									delete pen;
+								}
+							}
+#endif
+
+							// and now restore so that we get drawn correctly
+							++w;
+						}
+					}
+				}
+				BitBlt(hdc, 0, 0, w, h, cacheDC, 0, 0, SRCCOPY);
+
 			EndPaint(hWnd, &psPaint);
 			}
 			return 0;
@@ -2267,13 +2279,13 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 									GetPlayingFilename(0)), TRUE);
 			}
 		}
-		else if (lParam == IPC_WACUP_HAS_LOADED)
+		/*else if (lParam == IPC_WACUP_HAS_LOADED)
 		{
 			// used to help avoid some initial load painting issues
 			// which is more of an issue with wine since wacup with
 			// it's non-legacy mode has become the default instance
 			timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
-		}
+		}*/
 	}
 
 	// this will handle the message needed to be caught before the original window
