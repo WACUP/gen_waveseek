@@ -137,7 +137,7 @@ Out_Module *CreateOutput(HWND hwnd, HINSTANCE hDLL)
 	DestroyOutput();
 
 	nBufferPointer = 0;
-	SecureZeroMemory(pSampleBuffer, SAMPLE_BUFFER_SIZE * sizeof(unsigned short));
+	memset(pSampleBuffer, 0, SAMPLE_BUFFER_SIZE * sizeof(unsigned short));
 
 	pDummyOutput = (Out_Module *)calloc(1, sizeof(Out_Module));
 	if (pDummyOutput)

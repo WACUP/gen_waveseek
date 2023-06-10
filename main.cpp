@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.14"
+#define PLUGIN_VERSION "3.15"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -132,14 +132,12 @@ wchar_t
 #ifndef _WIN64
 In_Module * pModule = NULL;
 #endif
-int nLengthInMS = 0, no_uninstall = 1, delay_load = -1;
+int nLengthInMS = 0, no_uninstall = 1,
+	delay_load = -1, bUnsupported = 0;
 bool bIsCurrent = false, bIsProcessing = false, bIsLoaded = false;
-int bUnsupported = 0;
 DWORD delay_ipc = (DWORD)-1;
 
 std::map<std::wstring, HANDLE> processing_list;
-
-HBRUSH clrBackgroundBrush = NULL;
 
 COLORREF clrWaveform = RGB(0, 255, 0),
 		 clrBackground = RGB(0, 0, 0),
@@ -193,15 +191,7 @@ int GetFileInfo(const bool unicode, char* szFn, char szFile[MAX_PATH])
 
 void MPG123HotPatch(HINSTANCE module)
 {
-	struct
-	{
-		int offset;
-		int change_len;
-		int adjust;
-		char code[9];
-		char change[6];
-	}
-	blocks[] =
+	const patch_block blocks[] =
 	{
 		{0x7740, 2, 0, "\x75\x05\xE8\x89\xFD\xFF\xFF\x6A", "\xEB\x00"}, // 109.2 SSE2
 		{0x76CB, 2, 0, "\x75\x05\xE8\x8E\xFD\xFF\xFF\x6A", "\xEB\x00"}, // 109.2 normal
@@ -209,29 +199,7 @@ void MPG123HotPatch(HINSTANCE module)
 		{0x725B, 2, 0, "\x75\x05\xE8\x8E\xFE\xFF\xFF\x53", "\xEB\x00"}, // 112.1 normal
 	};
 
-	HANDLE curproc = GetCurrentProcess();
-	for (int i = 0; i < ARRAYSIZE(blocks); i++)
-	{
-		// offset in gen_ml.dll when loaded
-		char* p = (char*)((int)module + blocks[i].offset);
-
-		if (!memcmp((LPCVOID)p, blocks[i].code, 8))
-		{
-			// nudge the start position for the code we want to patch as needed
-			p += blocks[i].adjust;
-
-			DWORD flOldProtect = 0, flDontCare = 0;
-			if (VirtualProtect((LPVOID)p, blocks[i].change_len, PAGE_EXECUTE_READWRITE, &flOldProtect))
-			{
-				// we now write a short jump which skips over the
-				// native call which is done for LayoutWindows(..)
-				// so our version is used without conflict from it
-				DWORD written = 0;
-				WriteProcessMemory(curproc, (LPVOID)p, blocks[i].change, blocks[i].change_len, &written);
-				VirtualProtect((LPVOID)p, blocks[i].change_len, flOldProtect, &flDontCare);
-			}
-		}
-	}
+	ApplyPatch(module, blocks, ARRAYSIZE(blocks));
 }
 #endif
 
@@ -371,7 +339,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		uint64_t nTotalSampleCount = 0;
 		unsigned short pThreadSampleBuffer[SAMPLE_BUFFER_SIZE] = { 0 };
 
-		SecureZeroMemory(pSampleBuffer, SAMPLE_BUFFER_SIZE * sizeof(unsigned short));
+		memset(pSampleBuffer, 0, SAMPLE_BUFFER_SIZE * sizeof(unsigned short));
 		(void)StringCchCopy(szThreadWaveCacheFile, ARRAYSIZE(szThreadWaveCacheFile), szWaveCacheFile);
 
 		// ensure that the expected count will work with vary large files where there's
@@ -1123,7 +1091,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 			}
 			else
 			{
-				HANDLE h = CreateFile(szWaveCacheFile, GENERIC_READ, NULL, NULL,
+				const HANDLE h = CreateFile(szWaveCacheFile, GENERIC_READ, NULL, NULL,
 									  OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
 				if (h != INVALID_HANDLE_VALUE)
 				{
@@ -1198,12 +1166,6 @@ COLORREF GetSkinColour(LPCWSTR element_id, COLORREF default_colour)
 
 void ProcessSkinChange(BOOL skip_refresh = FALSE)
 {
-	if (clrBackgroundBrush != NULL)
-	{
-		DeleteBrush(clrBackgroundBrush);
-		clrBackgroundBrush = NULL;
-	}
-
 	clrBackground = WADlg_getColor(WADLG_ITEMBG);
 	clrCuePoint = WADlg_getColor(WADLG_HILITE);
 	clrGeneratingText = WADlg_getPlaylistSelectionTextColor();
@@ -1266,8 +1228,6 @@ void ProcessSkinChange(BOOL skip_refresh = FALSE)
 			clrWaveformPlayed = GetSkinColour(L"plugin.waveseeker.wave_playing", clrWaveformPlayed);
 			clrWaveformFailed = GetSkinColour(L"plugin.waveseeker.wave_failed", clrWaveformFailed);
 		}
-
-		clrBackgroundBrush = CreateSolidBrush(clrBackground);
 	}
 
 	if (!skip_refresh)
@@ -1603,17 +1563,9 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		}
 		case WM_TIMER:
 		{
-			if (wParam == TIMER_ID)
-			{
-				if (!bIsProcessing)
-				{
-					KillTimer(hWndInner, TIMER_ID);
-				}
-
-				if (IsWindowVisible(hWnd))
+			if ((wParam == TIMER_ID) && IsWindowVisible(hWnd))
 			{
 				InvalidateRect(hWnd, NULL, FALSE);
-			}
 			}
 			break;
 		}
@@ -1676,31 +1628,38 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 					lastWnd = wnd;
 				}
 
-				const HBRUSH background = (clrBackgroundBrush ? clrBackgroundBrush :
-												WADlg_getBrush(WADLG_ITEMBG_BRUSH));
-				FillRect(cacheDC, &wnd, background);
+				SetBkColor(cacheDC, clrBackground);
+				ExtTextOut(cacheDC, 0, 0, ETO_OPAQUE, &wnd, NULL, 0, 0);
 
 				if (paint_allowed)
 				{
-					if ((bIsLoaded || bIsProcessing) && !bUnsupported)
-					{
 						// make the width a bit less so the right-edge
 						// can allow for the end of the track to be
 						// correctly selected or the tooltip show up
 						--w;
 
+					if ((bIsLoaded || bIsProcessing) && !bUnsupported)
+					{
 						SelectObject(cacheDC, GetStockObject(DC_PEN));
 
+						SetDCPenColor(cacheDC, (nSongPos ? clrWaveformPlayed : clrWaveform));
+
+						const bool has_cue = (showCuePoints && (nCueTracks > 0));
+						bool changed = false;
 						for (int i = 0; i < w; i++)
 						{
 							const int nBufLoc0 = ((i * SAMPLE_BUFFER_SIZE) / w),
 									  nBufLoc1 = min((((i + 1) * SAMPLE_BUFFER_SIZE) / w), SAMPLE_BUFFER_SIZE);
 
-							SetDCPenColor(cacheDC, ((nBufLoc0 < nBufPos) ?
-										  clrWaveformPlayed : clrWaveform));
+							// only update this when there's a need
+							if (nSongPos && (nBufLoc0 >= nBufPos) && !changed)
+							{
+								changed = true;
+								SetDCPenColor(cacheDC, clrWaveform);
+							}
 
 							unsigned short nSample = 0;
-							for (int j = nBufLoc0; j < nBufLoc1; j++)
+							for (int j = nBufLoc0; j < nBufLoc1 && j < SAMPLE_BUFFER_SIZE; j++)
 							{
 								nSample = max(pSampleBuffer[j], nSample);
 							}
@@ -1714,9 +1673,9 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 								LineTo(cacheDC, i, y + sh);
 							}
 
-							if (showCuePoints && (nCueTracks > 0))
+							if (has_cue)
 							{
-								unsigned int ms = MulDiv(i, nSongLen, w);
+								const unsigned int ms = MulDiv(i, nSongLen, w);
 								if (ms > 0)
 								{
 									for (int k = 0; k <= nCueTracks; k++)
@@ -1736,13 +1695,13 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 							}
 						}
 
+						if (has_cue)
+						{
 						for (int k = 0; k < nCueTracks; k++)
 						{
 							pCueTracks[k].bDrawn = false;
 						}
-
-						// and now restore so that we get drawn correctly
-						++w;
+					}
 					}
 					else
 					{
@@ -1762,12 +1721,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 						}
 						else
 						{
-							// make the width a bit less so the right-edge
-							// can allow for the end of the track to be
-							// correctly selected or the tooltip show up
-							--w;
-
-							const int y = h / 2;
+							const int y = (h / 2);
 #ifdef USE_GDIPLUS
 							const bool plain = false;
 							if (plain)
@@ -1776,7 +1730,9 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 								const HDC hdcMem2 = CreateCompatibleDC(hdc);
 								const HBITMAP hbmMem2 = CreateCompatibleBitmap(hdc, w, h),
 											  hbmOld2 = (HBITMAP)SelectObject(hdcMem2, hbmMem2);
-								FillRect(hdcMem2, &wnd, background);
+
+								SetBkColor(hdcMem2, clrBackground);
+								ExtTextOut(hdcMem2, 0, 0, ETO_OPAQUE, &wnd, NULL, 0, 0);
 
 								// draw a sine wave to indicate we're still
 								// there but that we've not got anything to
@@ -1798,6 +1754,8 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 										MoveToEx(thisdc, 0, y, NULL);
 									}
 
+									const bool playing = (k && (nBufPos > 0));
+									const HBRUSH br = (playing ? CreateSolidBrush(clrWaveformPlayed) : NULL);
 									for (int j = 0; j < ((w / 256) + 1); j++)
 									{
 #define num_point 4096
@@ -1813,30 +1771,28 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 											PolylineTo(thisdc, points, num_point);
 
 											// only fill in things when its needed
-											if (k && (nBufPos > 0))
-											{
-												HRGN rgn = CreatePolygonRgn(points, num_point, ALTERNATE/*/WINDING/**/);
+											const HRGN rgn = (playing ? CreatePolygonRgn(points, num_point,
+																		  ALTERNATE/*/WINDING/**/) : NULL);
 												if (rgn)
 												{
-													HBRUSH br = CreateSolidBrush(clrWaveformPlayed);
 													if (br)
 													{
 														FillRgn(thisdc, rgn, br);
-														DeleteObject(br);
 													}
 													DeleteObject(rgn);
 												}
-											}
 											plugin.memmgr->sysFree(points);
 										}
 									}
 
 									// ensure the middle line will show in playing mode
-									if (k && (nBufPos > 0))
+									if (playing)
 									{
 										SetDCPenColor(thisdc, clrWaveform);
 										MoveToEx(thisdc, 0, y, NULL);
 										LineTo(thisdc, w, y);
+
+										DeleteObject(br);
 									}
 								}
 
@@ -1884,13 +1840,14 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 								}
 							}
 #endif
+						}
+					}
 
 							// and now restore so that we get drawn correctly
 							++w;
-						}
-					}
-				}
+
 				BitBlt(hdc, 0, 0, w, h, cacheDC, 0, 0, SRCCOPY);
+				}
 
 			EndPaint(hWnd, &psPaint);
 			}
@@ -2270,7 +2227,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 					}
 				}*/
 			}
-			else if ((wParam == 1) || (wParam == 2))
+			else
 			{
 				// allow new threads to be spawned
 				// after we've cleaned up existing
