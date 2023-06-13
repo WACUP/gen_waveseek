@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.15"
+#define PLUGIN_VERSION "3.16"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -74,7 +74,7 @@ HBITMAP cacheBMP = NULL;
 RECT lastWnd = { 0 };
 embedWindowState embed = { 0 };
 TOOLINFO ti = { 0 };
-int on_click = 0, clickTrack = 1, showCuePoints = 0,
+int clickTrack = 0, showCuePoints = 0,
 #ifndef _WIN64
 	legacy = 0,
 #endif
@@ -1280,7 +1280,8 @@ bool ProcessMenuResult(UINT command, HWND parent)
 		case ID_SUBMENU_CLEARWAVCACHEONEXIT:
 		{
 			clearOnExit = (!clearOnExit);
-			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"clearOnExit", clearOnExit);
+			SaveNativeIniString(WINAMP_INI, L"Waveseek", L"clearOnExit",
+										   (clearOnExit ? L"1" : NULL));
 			break;
 		}
 		case ID_SUBMENU_CLEARWAVCACHE:
@@ -1372,7 +1373,8 @@ bool ProcessMenuResult(UINT command, HWND parent)
 		case ID_CONTEXTMENU_CLICKTRACK:
 		{
 			clickTrack = (!clickTrack);
-			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"clickTrack", clickTrack);
+			SaveNativeIniString(WINAMP_INI, L"Waveseek", L"clickTrack",
+										   (clickTrack ? L"1" : NULL));
 
 			// update as needed to match the new setting
 			// with fallback to the current playing if
@@ -1393,25 +1395,29 @@ bool ProcessMenuResult(UINT command, HWND parent)
 		case ID_SUBMENU_SHOWCUEPOINTS:
 		{
 			showCuePoints = (!showCuePoints);
-			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"showCuePoints", showCuePoints);
+			SaveNativeIniString(WINAMP_INI, L"Waveseek", L"showCuePoints",
+										   (showCuePoints ? L"1" : NULL));
 			break;
 		}
 		case ID_SUBMENU_HIDEWAVEFORMTOOLTIP:
 		{
 			hideTooltip = (!hideTooltip);
-			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"hideTooltip", hideTooltip);
+			SaveNativeIniString(WINAMP_INI, L"Waveseek", L"hideTooltip",
+										   (hideTooltip ? L"1" : NULL));
 			break;
 		}
 		case ID_SUBMENU_RENDERWAVEFORMFORAUDIO:
 		{
 			audioOnly = (!audioOnly);
-			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"audioOnly", audioOnly);
+			SaveNativeIniString(WINAMP_INI, L"Waveseek", L"audioOnly",
+										   (audioOnly ? NULL : L"0"));
 			break;
 		}
 		case ID_SUBMENU_RENDERWAVEFORMUSINGALOWERPRIORITY:
 		{
 			lowerpriority = (!lowerpriority);
-			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"lowerpriority", lowerpriority);
+			SaveNativeIniString(WINAMP_INI, L"Waveseek", L"lowerpriority",
+										   (lowerpriority ? L"1" : NULL));
 
 			// update the threads that are already running
 			std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
@@ -1431,7 +1437,8 @@ bool ProcessMenuResult(UINT command, HWND parent)
 		case ID_SUBMENU_USELEGACYPROCESSINGMODE:
 		{
 			legacy = (!legacy);
-			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"legacy", legacy);
+			SaveNativeIniString(WINAMP_INI, L"Waveseek", L"legacy",
+										   (legacy ? L"1" : NULL));
 			if (legacy)
 			{
 				Subclass(hWndWaveseek, EmdedWndProc);
@@ -1446,7 +1453,8 @@ bool ProcessMenuResult(UINT command, HWND parent)
 		case ID_SUBMENU_SHOWDEBUGGINGMESSAGES:
 		{
 			debug = (!debug);
-			SaveNativeIniInt(WINAMP_INI, L"Waveseek", L"debug", debug);
+			SaveNativeIniString(WINAMP_INI, L"Waveseek", L"debug",
+										   (debug ? L"1" : NULL));
 			break;
 		}
 		case ID_SUBMENU_ABOUT:
@@ -2119,16 +2127,16 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 					SaveNativeIniString(WINAMP_INI, L"Waveseek", L"Migrate", L"1");
 				}*/
 
-				clearOnExit = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"clearOnExit", 0);
-				clickTrack = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"clickTrack", 1);
-				showCuePoints = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"showCuePoints", 0);
-				hideTooltip = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"hideTooltip", 0);
-				audioOnly = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"audioOnly", 1);
-				lowerpriority = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"lowerpriority", 0);
+				clearOnExit = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"clearOnExit", clearOnExit);
+				clickTrack = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"clickTrack", clickTrack);
+				showCuePoints = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"showCuePoints", showCuePoints);
+				hideTooltip = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"hideTooltip", hideTooltip);
+				audioOnly = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"audioOnly", audioOnly);
+				lowerpriority = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"lowerpriority", lowerpriority);
 #ifndef _WIN64
-				legacy = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"legacy", 0);
+				legacy = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"legacy", legacy);
 #endif
-				debug = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"debug", 0);
+				debug = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"debug", debug);
 
 				// just get the colours but no need to do
 				// a refresh as that will cause a ui lag!
