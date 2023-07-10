@@ -5,10 +5,6 @@
 #include <winamp/wa_ipc.h>
 #include "api.h"
 
-#ifndef WINAMP_NEXT_WINDOW
-#define WINAMP_NEXT_WINDOW 40063
-#endif
-
 #ifndef WINAMP_REFRESHSKIN
 #define WINAMP_REFRESHSKIN 40291
 #endif

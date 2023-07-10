@@ -22,7 +22,8 @@ unsigned long nCurrentAmplitude = 0,
 			  nCurrentSampleCount = 0;
 extern int nLengthInMS;
 
-int DummyOutOpen(int samplerate, int numchannels, int bitspersamp, int /*bufferlenms*/, int /*prebufferms*/)
+int DummyOutOpen(const int samplerate, const int numchannels, const int bitspersamp,
+							   const int /*bufferlenms*/, const int /*prebufferms*/)
 {
 	nNumChannels = numchannels;
 	nBitsPerSample = bitspersamp;
@@ -36,7 +37,7 @@ int DummyOutOpen(int samplerate, int numchannels, int bitspersamp, int /*bufferl
 	return 1;
 }
 
-void DummyOutClose() { }
+void DummyOutClose(void) { }
 
 void AddSample(unsigned int nSample)
 {
@@ -51,7 +52,7 @@ void AddSample(unsigned int nSample)
 	}
 }
 
-int DummyOutWrite(char *buf, int len)
+int DummyOutWrite(const char *buf, const int len)
 {
 	if (nFramePerWindow == 0)
 	{
@@ -89,43 +90,44 @@ int DummyOutWrite(char *buf, int len)
 	return 0;
 }
 
-int DummyOutCanWrite()
+int DummyOutCanWrite(void)
 {
 	return 65536;
 }
 
-int DummyOutIsPlaying()
+int DummyOutIsPlaying(void)
 {
 	return 0;
 }
 
-int DummyOutPause(int /*pause*/)
+int DummyOutPause(const int /*pause*/)
 {
 	return 0;
 }
 
-void DummyOutSetVolume(int /*volume*/) { }
+void DummyOutSetVolume(const int /*volume*/) { }
 
-void DummyOutSetPanning(int /*pan*/) { }
+void DummyOutSetPanning(const int /*pan*/) { }
 
-void DummyOutFlush(int /*t*/) { }
+void DummyOutFlush(const int /*t*/) { }
 
-int DummyOutGetOutputTime()
+int DummyOutGetOutputTime(void)
 {
 	return 0;
 }
 
-int DummyOutGetWrittenTime()
+int DummyOutGetWrittenTime(void)
 {
 	return 0;
 }
 
-int DummyDSPIsActive()
+int DummyDSPIsActive(void)
 {
 	return 0;
 }
 
-int DummyDSPDoSamples(short int * /*samples*/, int numsamples, int /*bps*/, int /*nch*/, int /*srate*/)
+int DummyDSPDoSamples(short int * /*samples*/, int numsamples,
+					  int /*bps*/, int /*nch*/, int /*srate*/)
 {
 	return numsamples;
 }

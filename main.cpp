@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.16"
+#define PLUGIN_VERSION "3.17"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -119,7 +119,6 @@ wchar_t
 		*szDLLPath = 0, *ini_file = 0,
 #endif
 		szFilename[MAX_PATH] = { 0 },
-		szWaveCacheDir[MAX_PATH] = { 0 },
 		szWaveCacheFile[MAX_PATH] = { 0 },
 #ifndef _WIN64
 		szTempDLLDestination[MAX_PATH] = { 0 },
@@ -148,8 +147,9 @@ COLORREF clrWaveform = RGB(0, 255, 0),
 
 void PluginConfig();
 
-void GetFilePaths()
+wchar_t* GetFilePaths(void)
 {
+	static wchar_t szWaveCacheDir[MAX_PATH] = { 0 };
 	if (!szWaveCacheDir[0])
 	{
 		// find the winamp.ini for the Winamp install being used
@@ -173,6 +173,7 @@ void GetFilePaths()
 		szDLLPath = (wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETPLUGINDIRECTORYW);
 #endif
 	}
+	return szWaveCacheDir;
 }
 
 #ifndef _WIN64
@@ -245,7 +246,7 @@ void ClearProcessingHandles()
 		HANDLE handle = (*itr).second;
 		if (handle != NULL)
 		{
-			WaitForSingleObject(handle, INFINITE);
+				WaitForSingleObject(handle, 3000/*/INFINITE/**/);
 			CloseHandle(handle);
 		}
 		itr = processing_list.erase(itr);
@@ -270,6 +271,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	LARGE_INTEGER starttime = { 0 }, endtime = { 0 };
 	QueryPerformanceCounter(&starttime);
 #endif
+
+	(void)CreateCOM();
 
 	CalcThreadParams *item = (CalcThreadParams *)lp;
 	ifc_audiostream* decoder = NULL;
@@ -479,6 +482,8 @@ abort:
 #endif
 	plugin.memmgr->sysFree((LPVOID)item->filename);
 	plugin.memmgr->sysFree((LPVOID)item);
+
+	CloseCOM();
 	return 0;
 }
 
@@ -493,8 +498,15 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 	// though only doing it if the window is open otherwise it's a waste
 	// to do the processing if it's not going to be seen & resolves some
 	// user complaints related to the background processing hammering it
-	if (!kill_threads && visible && WASABI_API_DECODEFILE2 && WASABI_API_DECODEFILE2->DecoderExists(szFn))
+	const bool has_inner_wnd = IsWindow(hWndInner);
+	if (!kill_threads && (visible || !has_inner_wnd/*BBM skin embedded*/) &&
+		WASABI_API_DECODEFILE2 && WASABI_API_DECODEFILE2->DecoderExists(szFn))
 	{
+		if (!visible && has_inner_wnd)
+	{
+			visible = TRUE;
+		}
+
 		CalcThreadParams *item = (CalcThreadParams *)plugin.memmgr->sysMalloc(sizeof(CalcThreadParams));
 		if (item)
 		{
@@ -511,7 +523,10 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 			{
 				SetThreadPriority(CalcThread, (!lowerpriority ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_LOWEST));
 				ResumeThread(CalcThread);
+				if (IsWindow(hWndInner))
+				{
 				timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
+				}
 				bIsProcessing = true;
 				return CalcThread;
 			}
@@ -612,7 +627,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 				return NULL;
 			}
 
-			CombinePath(szTempDLLDestination, szWaveCacheDir, L"waveseek_");
+			CombinePath(szTempDLLDestination, GetFilePaths(), L"waveseek_");
 			AddExtension(szTempDLLDestination, filename);
 
 			// if not there then copy it
@@ -727,7 +742,10 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 						return NULL;
 					}
 
+					if (IsWindow(hWndInner))
+					{
 					timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
+					}
 					bIsProcessing = true;
 				}
 			}
@@ -775,7 +793,10 @@ void ProcessStop(const bool is_closing)
 
 	if (!is_closing && !!GetPlayingState())
 	{
+		if (IsWindow(hWndInner))
+		{
 		timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
+	}
 	}
 	else if (IsWindow(hWndInner))
 	{
@@ -783,8 +804,10 @@ void ProcessStop(const bool is_closing)
 
 		if (timer_id)
 		{
+			if (IsWindow(hWndInner))
+			{
 			InvalidateRect(hWndInner, NULL, FALSE);
-
+			}
 			timer_id = 0;
 		}
 	}
@@ -1031,7 +1054,7 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 			// for a smoother upgrade we'll still look
 			// for the original cache file but a newer
 			// file will be made with the better name.
-			CombinePath(szWaveCacheFile, szWaveCacheDir,
+			CombinePath(szWaveCacheFile, GetFilePaths(),
 						FindPathFileName(usable_path));
 			StringCchCat(szWaveCacheFile, ARRAYSIZE(szWaveCacheFile), L".cache");
 
@@ -1041,12 +1064,12 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 				if (GetFilenameHash(usable_path, cacheFile))
 				{
 					StringCchCat(cacheFile, ARRAYSIZE(cacheFile), L".cache");
-					CombinePath(szWaveCacheFile, szWaveCacheDir, cacheFile);
+					CombinePath(szWaveCacheFile, GetFilePaths(), cacheFile);
 				}
 			}
 #else
 			// TODO apply the above to a non-WACUP install
-			CombinePath(szWaveCacheFile, szWaveCacheDir,
+			CombinePath(szWaveCacheFile, GetFilePaths(),
 						FindPathFileName(usable_path));
 			StringCchCat(szWaveCacheFile, ARRAYSIZE(szWaveCacheFile), L".cache");
 #endif
@@ -1061,7 +1084,11 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 					// more processing / duplication
 					if (wcsistr(usable_path, (*itr).first.c_str()))
 					{
+						if (IsWindow(hWndInner))
+						{
 						timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
+						}
+
 						bIsProcessing = true;
 						return;
 					}
@@ -1084,7 +1111,10 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 				}
 				else
 				{
+					if (IsWindow(hWndInner))
+					{
 					timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
+					}
 					bIsProcessing = true;
 					return;
 				}
@@ -1244,12 +1274,12 @@ void ClearCacheFolder(const bool mode)
 	{
 		WIN32_FIND_DATA wfd = { 0 };
 		wchar_t szFnFind[MAX_PATH] = { 0 };
-		HANDLE hFind = FindFirstFile(CombinePath(szFnFind, szWaveCacheDir, (!i ? L"*.cache" : L"*.dll")), &wfd);
+		HANDLE hFind = FindFirstFile(CombinePath(szFnFind, GetFilePaths(), (!i ? L"*.cache" : L"*.dll")), &wfd);
 		if (hFind != INVALID_HANDLE_VALUE)
 		{
 			do
 			{
-				DeleteFile(CombinePath(szFnFind, szWaveCacheDir, wfd.cFileName));
+				DeleteFile(CombinePath(szFnFind, GetFilePaths(), wfd.cFileName));
 			} while (FindNextFile(hFind, &wfd));
 			FindClose(hFind);
 		}
@@ -1318,7 +1348,7 @@ bool ProcessMenuResult(UINT command, HWND parent)
 			{
 				// support the older & newer cache filenames
 				wchar_t filename[MAX_PATH] = { 0 };
-				CombinePath(filename, szWaveCacheDir,
+				CombinePath(filename, GetFilePaths(),
 							FindPathFileName(szFilename));
 				StringCchCat(filename, ARRAYSIZE(filename), L".cache");
 				if (FileExists(filename))
@@ -1331,14 +1361,17 @@ bool ProcessMenuResult(UINT command, HWND parent)
 					if (GetFilenameHash(szFilename, cacheFile))
 					{
 						StringCchCat(cacheFile, ARRAYSIZE(cacheFile), L".cache");
-						if (CheckForPath(filename, szWaveCacheDir, cacheFile))
+						if (CheckForPath(filename, GetFilePaths(), cacheFile))
 						{
 							DeleteFile(filename);
 						}
 					}
 				}
 
+				if (IsWindow(hWndInner))
+				{
 				timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
+				}
 				bIsProcessing = false;
 				//kill_threads = 1;
 
@@ -1566,6 +1599,15 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 				ti.uId = (UINT_PTR)lParam;
 				PostMessage(hWndToolTip, TTM_ADDTOOL, NULL, (LPARAM)&ti);
 				SkinToolTip(hWndToolTip);
+			}
+
+			// if we've been created but processing is already
+			// underway then we need to get things going on to
+			// ensure the processing will be shown. embedding
+			// the window in the BBM skin can cause this issue
+			if (bIsProcessing)
+			{
+				timer_id = SetTimer(hWnd, TIMER_ID, TIMER_LIVE_FREQ, NULL);
 			}
 			break;
 		}
@@ -2083,7 +2125,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				(InitialShowState() != SW_SHOWMINIMIZED))
 			{
 				// only show on startup if under a classic skin and was set
-				PostMessage(hWndWaveseek, WM_USER + 102, 0, 0);
+				ShowHideEmbeddedWindow(hWndWaveseek, TRUE, FALSE);
 			}
 		}
 		else if (lParam == delay_load)
@@ -2113,7 +2155,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 								// as long as there's permission and the OS can
 								wchar_t szFnMove[MAX_PATH] = { 0 };
 								CombinePath(szFnFind, szOldWaveCacheDir, wfd.cFileName);
-								CombinePath(szFnMove, szWaveCacheDir, wfd.cFileName);
+								CombinePath(szFnMove, GetFilePaths(), wfd.cFileName);
 								MoveFileEx(szFnFind, szFnMove, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED);
 							}
 							while (FindNextFile(hFind,&wfd));
@@ -2231,7 +2273,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 					// only show on startup if under a classic skin and was set
 					if (visible)
 					{
-						PostMessage(hWndWaveseek, WM_USER + 102, 0, 0);
+						ShowHideEmbeddedWindow(hWndWaveseek, TRUE, FALSE);
 					}
 				}*/
 			}
@@ -2249,7 +2291,10 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 			// used to help avoid some initial load painting issues
 			// which is more of an issue with wine since wacup with
 			// it's non-legacy mode has become the default instance
+			if (IsWindow(hWndInner))
+			{
 			timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
+			}
 		}*/
 	}
 

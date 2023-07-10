@@ -195,7 +195,7 @@ LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd,
 	if ((message == WM_SYSCOMMAND || message == WM_COMMAND) && LOWORD(wParam) == menuId)
 	{
 		self_update = TRUE;
-		PostMessage(embedWnd, WM_USER + (!IsWindowVisible(embedWnd) ? 102 : 105), 0, 0);
+		ShowHideEmbeddedWindow(embedWnd, !IsWindowVisible(embedWnd), FALSE);
 		visible = !visible;
 		UpdateEmbeddedWindowsMenu(menuId);
 		self_update = FALSE;
@@ -204,10 +204,9 @@ LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd,
 	// this is sent to the child window of the frame when the 'close' button is clicked
 	else if (message == WM_CLOSE)
 	{
-		PostMessage(embedWnd, WM_USER + 105, 0, 0);
+		ShowHideEmbeddedWindow(embedWnd, FALSE, TRUE);
 		visible = 0;
 		UpdateEmbeddedWindowsMenu(menuId);
-		PostMessage(plugin.hwndParent, WM_COMMAND, MAKEWPARAM(WINAMP_NEXT_WINDOW, 0), 0);
 	}
 	else if (message == WM_WINDOWPOSCHANGING)
 	{
@@ -216,7 +215,7 @@ LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd,
 		 just ignore this message because our visibility will not change once the freeform
 		 takeover/restoration is complete
 		*/
-		embedWindowState *state=(embedWindowState *)GetWindowLongPtr(embedWnd,GWLP_USERDATA);
+		const embedWindowState *state=(embedWindowState *)GetWindowLongPtr(embedWnd,GWLP_USERDATA);
 		if (state && state->reparenting && !GetParent(embedWnd))
 		{
 			// this will reset the position of the frame when we need it to
@@ -240,7 +239,7 @@ void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT_PTR menuId, em
 		if (LOWORD(wParam) == menuId)
 		{
 			self_update = TRUE;
-			PostMessage(embedWnd, WM_USER + (!IsWindowVisible(embedWnd) ? 102 : 105), 0, 0);
+			ShowHideEmbeddedWindow(embedWnd, !IsWindowVisible(embedWnd), FALSE);
 			visible = !visible;
 			UpdateEmbeddedWindowsMenu(menuId);
 			self_update = FALSE;
@@ -258,7 +257,7 @@ void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT_PTR menuId, em
 	{
 		if (lParam == IPC_SKIN_CHANGED_NEW)
 		{
-			PostMessage(GetWindow(embedWnd, GW_CHILD), WM_USER + 0x202, 0, 0);
+			RefreshInnerWindow(GetWindow(embedWnd, GW_CHILD));
 		}
 		else if ((lParam == IPC_CB_ONSHOWWND) || (lParam == IPC_CB_ONHIDEWND))
 		{
@@ -274,7 +273,7 @@ void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT_PTR menuId, em
 			// re-show the example window when Winamp is being restored to visibility
 			if (EmbeddedWindowIsMinimisedMode(embedWnd))
 			{
-				PostMessage(embedWnd, WM_USER + (visible ? 102 : 105), 0, 0);
+				ShowHideEmbeddedWindow(embedWnd, visible, FALSE);
 				SetEmbeddedWindowMinimisedMode(embedWnd, false);
 			}
 		}
