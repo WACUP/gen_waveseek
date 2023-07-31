@@ -6,10 +6,9 @@
 #include <loader/loader/ini.h>
 
 // internal variables
-HMENU main_menu = 0, windows_menu = 0;
+//HMENU main_menu = 0, windows_menu = 0;
 int height = 0, width = 0;
-BOOL visible = FALSE, old_visible = FALSE,
-	 self_update = FALSE;
+BOOL visible = FALSE, old_visible = FALSE, self_update = FALSE;
 RECT initial[2] = {0};
 
 HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID embedWindowGUID)
@@ -26,7 +25,7 @@ HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID embedWindowG
 	embedWindow->r.top = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"PosY", 348);
 	
 	//TODO map from the old values?
-	int right = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"wnd_right", -1),
+	const int right = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"wnd_right", -1),
 		bottom = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"wnd_bottom", -1);
 
 	if (right != -1)
@@ -96,21 +95,24 @@ void DestroyEmbeddedWindow(embedWindowState* embedWindow)
 	}
 }
 
-void AddEmbeddedWindowToMenus(BOOL add, UINT menuId, LPWSTR menuString, BOOL setVisible)
+/*void AddEmbeddedWindowToMenus(const BOOL add, const UINT menuId, LPCWSTR menuString, const BOOL setVisible)
 {
 	// this will add a menu item to the main right-click menu
 	if (add)
 	{
-		main_menu = GetNativeMenu((WPARAM)0);
-
-		int prior_item = GetMenuItemID(main_menu, 9);
-		if (prior_item <= 0)
+		if (main_menu == NULL)
 		{
-			prior_item = GetMenuItemID(main_menu, 8);
+		main_menu = GetNativeMenu((WPARAM)0);
 		}
-		AddItemToMenu2(main_menu, menuId, menuString, prior_item, 0);
-		CheckMenuItem(main_menu, menuId, MF_BYCOMMAND |
-					  ((setVisible == -1 ? visible : setVisible) ? MF_CHECKED : MF_UNCHECKED));
+
+		if (main_menu != NULL)
+		{
+			const int prior_item = FindMenuItemByID(main_menu, WINAMP_OPTIONS_PLEDIT, NULL);
+			AddItemToMenu2(main_menu, menuId, menuString, (prior_item + 1), TRUE);
+			CheckMenuItem(main_menu, menuId, MF_BYCOMMAND |
+						  (((setVisible == -1) ? visible : setVisible) ?
+											MF_CHECKED : MF_UNCHECKED));
+		}
 	}
 	else
 	{
@@ -126,17 +128,19 @@ void AddEmbeddedWindowToMenus(BOOL add, UINT menuId, LPWSTR menuString, BOOL set
 	// this will add a menu item to the main window views menu
 	if (add)
 	{
-		windows_menu = GetNativeMenu((WPARAM)4);
-
-		int prior_item = GetMenuItemID(windows_menu, 3);
-		if (prior_item <= 0)
+		if (windows_menu == NULL)
 		{
-			prior_item = GetMenuItemID(windows_menu, 2);
+		windows_menu = GetNativeMenu((WPARAM)4);
 		}
 
-		AddItemToMenu2(windows_menu, menuId, menuString, prior_item, 0);
-		CheckMenuItem(windows_menu, menuId, MF_BYCOMMAND |
-					  ((setVisible == -1 ? visible : setVisible) ? MF_CHECKED : MF_UNCHECKED));
+		if (windows_menu != NULL)
+		{
+			const int prior_item = FindMenuItemByID(windows_menu, WINAMP_OPTIONS_PLEDIT, NULL);
+			AddItemToMenu2(windows_menu, menuId, menuString, (prior_item + 1), TRUE);
+			CheckMenuItem(windows_menu, menuId, MF_BYCOMMAND |
+						  (((setVisible == -1) ? visible : setVisible) ?
+											MF_CHECKED : MF_UNCHECKED));
+		}
 	}
 	else
 	{
@@ -150,9 +154,9 @@ void AddEmbeddedWindowToMenus(BOOL add, UINT menuId, LPWSTR menuString, BOOL set
 #endif
 }
 
-void UpdateEmbeddedWindowsMenu(UINT menuId)
+void UpdateEmbeddedWindowsMenu(const UINT menuId)
 {
-	const UINT check = MF_BYCOMMAND | (visible ? MF_CHECKED : MF_UNCHECKED);
+	const UINT check = (MF_BYCOMMAND | (visible ? MF_CHECKED : MF_UNCHECKED));
 	if (main_menu)
 	{
 		CheckMenuItem(main_menu, menuId, check);
@@ -186,6 +190,19 @@ bool SetEmbeddedWindowMinimisedMode(HWND embeddedWindow, const bool minimised)
 bool EmbeddedWindowIsMinimisedMode(HWND embeddedWindow)
 {
 	return (GetProp(embeddedWindow, MINIMISED_FLAG) != 0);
+}*/
+
+void trigger_processing(void)
+{
+	// if we're being shown then now's the time to give a nudge to things
+	// so the processing can be started if needed as we'll now prefer not
+	// doing anything if the window is intentionally closed especially on
+	// loading as it'll use less resources & seems to be the expectation.
+	if (visible)
+	{
+		extern int delay_load;
+		PostMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)2, delay_load);
+	}
 }
 
 LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -197,7 +214,8 @@ LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd,
 		self_update = TRUE;
 		ShowHideEmbeddedWindow(embedWnd, !IsWindowVisible(embedWnd), FALSE);
 		visible = !visible;
-		UpdateEmbeddedWindowsMenu(menuId);
+		UpdateEmbeddedWindowsMenu((UINT)menuId, visible);
+		trigger_processing();
 		self_update = FALSE;
 		return 1;
 	}
@@ -206,7 +224,7 @@ LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd,
 	{
 		ShowHideEmbeddedWindow(embedWnd, FALSE, TRUE);
 		visible = 0;
-		UpdateEmbeddedWindowsMenu(menuId);
+		UpdateEmbeddedWindowsMenu((UINT)menuId, visible);
 	}
 	else if (message == WM_WINDOWPOSCHANGING)
 	{
@@ -241,7 +259,8 @@ void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT_PTR menuId, em
 			self_update = TRUE;
 			ShowHideEmbeddedWindow(embedWnd, !IsWindowVisible(embedWnd), FALSE);
 			visible = !visible;
-			UpdateEmbeddedWindowsMenu(menuId);
+			UpdateEmbeddedWindowsMenu((UINT)menuId, visible);
+			trigger_processing();
 			self_update = FALSE;
 		}
 		else if (LOWORD(wParam) == WINAMP_REFRESHSKIN)
@@ -264,17 +283,18 @@ void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT_PTR menuId, em
 			if (((HWND)wParam == embedWnd) && !self_update)
 			{
 				visible = (lParam == IPC_CB_ONSHOWWND);
-				UpdateEmbeddedWindowsMenu(menuId);
+				UpdateEmbeddedWindowsMenu((UINT)menuId, visible);
+				trigger_processing();
 			}
 		}
 		else if ((lParam == IPC_IS_MINIMISED_OR_RESTORED) && !wParam)
 		{
 			// this is used to cope with Winamp being started minimised and will then
 			// re-show the example window when Winamp is being restored to visibility
-			if (EmbeddedWindowIsMinimisedMode(embedWnd))
+			if (EmbeddedWindowIsMinimisedMode(embedWnd, MINIMISED_FLAG))
 			{
 				ShowHideEmbeddedWindow(embedWnd, visible, FALSE);
-				SetEmbeddedWindowMinimisedMode(embedWnd, false);
+				SetEmbeddedWindowMinimisedMode(embedWnd, MINIMISED_FLAG, FALSE);
 			}
 		}
 	}

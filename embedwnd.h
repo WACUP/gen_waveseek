@@ -16,11 +16,11 @@
 
 // these functions deal with creating the embedded window and relevant menus, etc
 HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID embedWindowGUID);
-void AddEmbeddedWindowToMenus(BOOL add, UINT menuId, LPWSTR menuString, BOOL setVisible);
-void UpdateEmbeddedWindowsMenu(UINT menuId);
 void DestroyEmbeddedWindow(embedWindowState* embedWindow);
+/*void AddEmbeddedWindowToMenus(const BOOL add, const UINT menuId, LPCWSTR menuString, const BOOL setVisible);
+void UpdateEmbeddedWindowsMenu(const UINT menuId);
 bool SetEmbeddedWindowMinimisedMode(HWND embeddedWindow, const bool minimised);
-bool EmbeddedWindowIsMinimisedMode(HWND embeddedWindow);
+bool EmbeddedWindowIsMinimisedMode(HWND embeddedWindow);*/
 
 // these functions are used to process any relevant menu or window messages which the
 // embedded window needs to detect inorder to work (especially betweeen instances)

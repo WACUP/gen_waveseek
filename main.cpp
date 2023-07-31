@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.17"
+#define PLUGIN_VERSION "3.17.1"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -2198,7 +2198,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 
 				// finally we add menu items to the main right-click menu and the views menu
 				// with Modern skins which support showing the views menu for accessing windows
-				AddEmbeddedWindowToMenus(TRUE, WINAMP_WAVEFORM_SEEK_MENUID, WASABI_API_LNGSTRINGW(IDS_WAVEFORM_SEEKER_MENU), -1);
+				AddEmbeddedWindowToMenus(WINAMP_WAVEFORM_SEEK_MENUID, WASABI_API_LNGSTRINGW(IDS_WAVEFORM_SEEKER_MENU), visible, -1);
 
 				// now we will attempt to create an embedded window which adds its own main menu entry
 				// and related keyboard accelerator (like how the media library window is integrated)
@@ -2266,7 +2266,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				// is meant to remain hidden until Winamp is restored back into view correctly
 				if ((InitialShowState() == SW_SHOWMINIMIZED))
 				{
-					SetEmbeddedWindowMinimisedMode(hWndWaveseek, TRUE);
+					SetEmbeddedWindowMinimisedMode(hWndWaveseek, MINIMISED_FLAG, TRUE);
 				}
 				/*else
 				{
