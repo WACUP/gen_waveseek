@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.17.1"
+#define PLUGIN_VERSION "3.17.2"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -35,10 +35,7 @@
 #include <loader/loader/utils.h>
 #include <loader/loader/ini.h>
 #include <loader/hook/plugins.h>
-#include <nu/AutoWide.h>
-#include <nu/AutoChar.h>
 #include <nu/ServiceBuilder.h>
-#include <openssl/sha.h>
 #endif
 
 //#define WA_DLG_IMPLEMENT
@@ -958,30 +955,6 @@ int GetFileLengthMilliseconds(void)
 	return (GetBasicFileInfo(&bfiW, TRUE, TRUE) ? (bfiW.length * 1000) : -1000);
 }
 
-BOOL GetFilenameHash(LPCWSTR filename, LPWSTR cacheFile)
-{
-	// we generate a hash of the path (disk or stream)
-	// and then use that instead of the raw filename
-	// so we can better deal with duplicate filenames
-	// but within different folders (release vs remix)
-	// the main downside is that moving the file will
-	// now cause a re-render to be initiated but it's
-	// not that expensive of a process to do that now
-	unsigned char sha1[SHA_DIGEST_LENGTH] = { 0 };
-	if (SHA1Curl((unsigned char *)filename, (unsigned int)
-				 (wcslen(filename) * sizeof(wchar_t)), sha1))
-	{
-		// convert to a hex string
-		//wchar_t cacheFile[61] = { 0 };
-		for (int i = 0; i < 20; i++)
-		{
-			_snwprintf(cacheFile + i * 2, 3, L"%02x", sha1[i]);
-		}
-		return TRUE;
-	}
-	return FALSE;
-}
-
 BOOL AllowedFile(const wchar_t * szFn)
 {
 	LPCWSTR extension = FindPathExtension(szFn);
@@ -1274,7 +1247,7 @@ void ClearCacheFolder(const bool mode)
 	{
 		WIN32_FIND_DATA wfd = { 0 };
 		wchar_t szFnFind[MAX_PATH] = { 0 };
-		HANDLE hFind = FindFirstFile(CombinePath(szFnFind, GetFilePaths(), (!i ? L"*.cache" : L"*.dll")), &wfd);
+		HANDLE hFind = SearchFolder(szFnFind, GetFilePaths(), (!i ? L"*.cache" : L"*.dll"), &wfd);
 		if (hFind != INVALID_HANDLE_VALUE)
 		{
 			do
