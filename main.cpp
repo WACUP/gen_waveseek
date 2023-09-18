@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.17.2"
+#define PLUGIN_VERSION "3.17.3"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -86,16 +86,16 @@ api_skin *WASABI_API_SKIN = NULL;
 
 SETUP_API_LNG_VARS;
 
-void DummySAVSAInit(int maxlatency_in_ms, int srate) {}
+void DummySAVSAInit(const int maxlatency_in_ms, const int srate) {}
 void DummySAVSADeInit() {}
-void DummySAAddPCMData(void *PCMData, int nch, int bps, int timestamp) {}
+void DummySAAddPCMData(const void *PCMData, const int nch, const int bps, const int timestamp) {}
 int DummySAGetMode() { return 0; }
-int DummySAAdd(void *data, int timestamp, int csa) { return 0; }
-void DummyVSAAddPCMData(void *PCMData, int nch, int bps, int timestamp) {}
+int DummySAAdd(const void *data, const int timestamp, const int csa) { return 0; }
+void DummyVSAAddPCMData(const void *PCMData, const int nch, const int bps, const int timestamp) {}
 int DummyVSAGetMode(int *specNch, int *waveNch) { return 0; }
-int DummyVSAAdd(void *data, int timestamp) { return 0; }
-void DummyVSASetInfo(int srate, int nch) {}
-void DummySetInfo(int bitrate, int srate, int stereo, int synched) {}
+int DummyVSAAdd(const void *data, const int timestamp) { return 0; }
+void DummyVSASetInfo(const int srate, const int nch) {}
+void DummySetInfo(const int bitrate, const int srate, const int stereo, const int synched) {}
 
 #ifndef _WIN64
 LRESULT CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
@@ -986,10 +986,6 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 		// already been processed & all of that fun stuff!
 		wchar_t usable_path[MAX_PATH] = { 0 };
 		ProcessPath(szFn, usable_path, ARRAYSIZE(usable_path), FALSE);
-		if (!usable_path[0])
-		{
-			StringCchCopy(usable_path, ARRAYSIZE(usable_path), szFn);
-		}
 
 		if (wcsistr(szFilename, usable_path) && bIsProcessing)
 		{
