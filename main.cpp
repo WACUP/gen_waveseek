@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.17.3"
+#define PLUGIN_VERSION "3.18"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -976,7 +976,7 @@ BOOL AllowedFile(const wchar_t * szFn)
 	return TRUE;
 }
 
-void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
+void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wchar_t *szArchiveFn)
 {
 	if (szFn && *szFn)
 	{
@@ -984,8 +984,11 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 		// where it can otherwise cause re-processing when
 		// there's no need to actually do that when it has
 		// already been processed & all of that fun stuff!
-		wchar_t usable_path[MAX_PATH] = { 0 };
-		ProcessPath(szFn, usable_path, ARRAYSIZE(usable_path), FALSE);
+		wchar_t usable_path[MAX_PATH] = { 0 },
+				archive_override[FILENAME_SIZE] = { 0 };
+		const bool archive = (szArchiveFn && *szArchiveFn);
+		ProcessPath((archive ? szArchiveFn : szFn), usable_path,
+								 ARRAYSIZE(usable_path), FALSE);
 
 		if (wcsistr(szFilename, usable_path) && bIsProcessing)
 		{
@@ -993,14 +996,25 @@ void ProcessFilePlayback(const wchar_t * szFn, BOOL start_playing)
 			// to re-process (e.g. multiple clicks in the
 			// main playlist editor) then we try to filter
 			// out and keep going if it's the same file.
-			bIsCurrent = SameStr(usable_path, GetPlayingFilename(0));
+			bIsCurrent = SameStr(usable_path, GetPlayingFilename(0, archive_override));
+			if (archive_override[0] && SameStr((archive ? szArchiveFn :
+									   usable_path), archive_override))
+			{
+				bIsCurrent = true;
+			}
 			return;
 		}
 
 		ProcessStop();
 
 		bIsLoaded = bUnsupported = false;
-		bIsCurrent = SameStr(usable_path, GetPlayingFilename(0));
+		bIsCurrent = SameStr((archive ? szArchiveFn : usable_path),
+						  GetPlayingFilename(0, archive_override));
+		if (archive_override[0] && SameStr((archive ? szArchiveFn :
+								   usable_path), archive_override))
+		{
+			bIsCurrent = true;
+		}
 
 		(void)StringCchCopy(szFilename, ARRAYSIZE(szFilename), usable_path);
 
@@ -1390,7 +1404,10 @@ bool ProcessMenuResult(UINT command, HWND parent)
 					index = sel;
 				}
 			}
-			ProcessFilePlayback(GetPlaylistItemFile(index), FALSE);
+
+			wchar_t archive_override[FILENAME_SIZE] = { 0 };
+			ProcessFilePlayback(GetPlaylistItemFile(index, archive_override),
+													false, archive_override);
 			RefreshInnerWindow();
 			break;
 		}
@@ -1668,7 +1685,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 						for (int i = 0; i < w; i++)
 						{
 							const int nBufLoc0 = ((i * SAMPLE_BUFFER_SIZE) / w),
-									  nBufLoc1 = min((((i + 1) * SAMPLE_BUFFER_SIZE) / w), SAMPLE_BUFFER_SIZE);
+									  nBufLoc1 = (const int)min((((i + 1) * SAMPLE_BUFFER_SIZE) / w), SAMPLE_BUFFER_SIZE);
 
 							// only update this when there's a need
 							if (nSongPos && (nBufLoc0 >= nBufPos) && !changed)
@@ -2048,7 +2065,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 			// are setup correctly otherwise we get wrongly located
 			// waveseek_in_*.dll in the music folders loaded from :(
 			GetFilePaths();
-			ProcessFilePlayback((const wchar_t*)wParam, TRUE);
+			ProcessFilePlayback((const wchar_t*)wParam, true, NULL);
 		}
 		else if (lParam == IPC_STOPPLAYING)
 		{
@@ -2076,7 +2093,9 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				}
 			}
 
-			ProcessFilePlayback(GetPlaylistItemFile(index), FALSE);
+			wchar_t archive_override[FILENAME_SIZE] = { 0 };
+			ProcessFilePlayback(GetPlaylistItemFile(index, archive_override),
+													false, archive_override);
 			RefreshInnerWindow();
 		}
 		else if ((lParam == IPC_PLITEM_SELECTED_CHANGED) && clickTrack)
@@ -2084,8 +2103,9 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 			// art change to show the selected item in the playlist editor
 			// whilst also accounting for the selection changing & it then
 			// needing to be set back to the current item if there's none
-			ProcessFilePlayback(((wParam > 0) ? GetPlaylistItemFile((wParam - 1)) :
-												GetPlayingFilename(0)), FALSE);
+			wchar_t archive_override[FILENAME_SIZE] = { 0 };
+			ProcessFilePlayback(((wParam > 0) ? GetPlaylistItemFile((wParam - 1), archive_override) :
+											  GetPlayingFilename(0, NULL)), false, archive_override);
 			RefreshInnerWindow();
 		}
 		else if (lParam == IPC_GET_EMBEDIF_NEW_HWND)
@@ -2252,7 +2272,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				// after we've cleaned up existing
 				kill_threads = 0;
 				ProcessFilePlayback(((wParam == 1) ? szFilename :
-									GetPlayingFilename(0)), TRUE);
+					   GetPlayingFilename(0, NULL)), true, NULL);
 			}
 		}
 		/*else if (lParam == IPC_WACUP_HAS_LOADED)
