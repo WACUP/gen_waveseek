@@ -233,7 +233,7 @@ LRESULT HandleEmbeddedWindowChildMessages(HWND embedWnd, UINT menuId, HWND hwnd,
 		 just ignore this message because our visibility will not change once the freeform
 		 takeover/restoration is complete
 		*/
-		const embedWindowState *state=(embedWindowState *)GetWindowLongPtr(embedWnd,GWLP_USERDATA);
+		const embedWindowState* state = reinterpret_cast<const embedWindowState*>(GetWindowLongPtr(embedWnd, GWLP_USERDATA));
 		if (state && state->reparenting && !GetParent(embedWnd))
 		{
 			// this will reset the position of the frame when we need it to

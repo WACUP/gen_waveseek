@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.18"
+#define PLUGIN_VERSION "3.18.1"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -1021,7 +1021,8 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 		nCueTracks = 0;
 
 		// make sure that it's valid and something we can process
-		if ((!IsPathURL(usable_path) && FilePathExists(usable_path) && AllowedFile(usable_path)) ||
+		if ((!IsPathURL(usable_path) && !IsCDEntry(usable_path) &&
+			FilePathExists(usable_path) && AllowedFile(usable_path)) ||
 			(IsZipEntry(usable_path) && AllowedFile(usable_path)))
 		{
 			wchar_t szCue[MAX_PATH] = { 0 };
