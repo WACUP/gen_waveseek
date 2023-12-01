@@ -10,6 +10,7 @@
 int height = 0, width = 0;
 BOOL visible = FALSE, old_visible = FALSE, self_update = FALSE;
 RECT initial[2] = {0};
+extern LRESULT delay_load;
 
 HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID embedWindowGUID)
 {
@@ -172,7 +173,6 @@ void UpdateEmbeddedWindowsMenu(const UINT menuId)
 	// loading as it'll use less resources & seems to be the expectation.
 	if (visible)
 	{
-		extern int delay_load;
 		PostMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)2, delay_load);
 	}
 }
@@ -200,7 +200,6 @@ void trigger_processing(void)
 	// loading as it'll use less resources & seems to be the expectation.
 	if (visible)
 	{
-		extern int delay_load;
 		PostMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)2, delay_load);
 	}
 }

@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.18.1"
+#define PLUGIN_VERSION "3.19.2"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -77,7 +77,8 @@ int clickTrack = 0, showCuePoints = 0,
 #endif
 	audioOnly = 1, hideTooltip = 0, debug = 0,
 	kill_threads = 0, lowerpriority = 0, clearOnExit = 0;
-UINT WINAMP_WAVEFORM_SEEK_MENUID = 0xa1bb, timer_id = 0;
+UINT WINAMP_WAVEFORM_SEEK_MENUID = 0xa1bb;
+UINT_PTR timer_id = 0;
 
 api_service *WASABI_API_SVC = NULL;
 api_decodefile2 *WASABI_API_DECODEFILE2 = NULL;
@@ -128,12 +129,13 @@ wchar_t
 #ifndef _WIN64
 In_Module * pModule = NULL;
 #endif
-int nLengthInMS = 0, no_uninstall = 1,
-	delay_load = -1, bUnsupported = 0;
+LRESULT delay_load = -1;
+int nLengthInMS = 0, no_uninstall = 1, bUnsupported = 0;
 bool bIsCurrent = false, bIsProcessing = false, bIsLoaded = false;
 DWORD delay_ipc = (DWORD)-1;
 
 std::map<std::wstring, HANDLE> processing_list;
+CRITICAL_SECTION processing_cs = { 0 };
 
 COLORREF clrWaveform = RGB(0, 255, 0),
 		 clrBackground = RGB(0, 0, 0),
@@ -233,25 +235,28 @@ unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer, const unsig
 	return nAmplitude;
 }
 
-void ClearProcessingHandles()
-{
-	if (!processing_list.empty())
+void ClearProcessingHandles(void)
 	{
+	EnterCriticalSection(&processing_cs);
+
 	std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
 	while (itr != processing_list.end())
 	{
-		HANDLE handle = (*itr).second;
+		const HANDLE handle = (*itr).second;
 		if (handle != NULL)
 		{
-				WaitForSingleObject(handle, 3000/*/INFINITE/**/);
+			WaitForSingleObjectEx(handle, 3000/*/INFINITE/**/, TRUE);
+
+		if (handle != NULL)
+		{
 			CloseHandle(handle);
+		}
 		}
 		itr = processing_list.erase(itr);
 	}
 
 	// make sure we're good
 	processing_list.clear();
-}
 }
 
 typedef struct
@@ -320,7 +325,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 
 	// without a valid length we've not got much
 	// chance of reliably processing this file
-			if (lengthMS > 0)
+	if (!kill_threads && (lengthMS > 0))
 			{
 			decoder = (WASABI_API_DECODEFILE2 ? WASABI_API_DECODEFILE2->OpenAudioBackground(item->filename, &item->parameters) : NULL);
 
@@ -378,7 +383,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 			if (item->parameters.bitsPerSample == 16)
 			{
 				const short *p = (short *)data;
-				for (int i = 0; i < (bytesRead / 2) && !kill_threads; i++)
+				for (size_t i = 0; i < (bytesRead / 2) && !kill_threads; i++)
 				{
 					const unsigned int nSample = abs(*(p++));
 					nAmplitude = AddThreadSample(item->filename, &pThreadSampleBuffer[0],
@@ -389,7 +394,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 			else if (item->parameters.bitsPerSample == 24)
 			{
 				const char *p = (char *)data;
-				for (int i = 0; i < (bytesRead / 3) && !kill_threads; i++)
+				for (size_t i = 0; i < (bytesRead / 3) && !kill_threads; i++)
 				{
 					const unsigned int nSample = abs((((0xFF & *(p + 2)) << 24) |
 													 ((0xFF & *(p + 1)) << 16) |
@@ -443,6 +448,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 abort:
 	if (!kill_threads)
 	{
+		EnterCriticalSection(&processing_cs);
+
 		std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
 		while (itr != processing_list.end())
 		{
@@ -458,7 +465,11 @@ abort:
 			++itr;
 		}
 
-		if (!processing_list.size())
+		const bool is_empty = processing_list.empty();
+
+		LeaveCriticalSection(&processing_cs);
+
+		if (is_empty)
 		{
 			// start or stop the timer
 			// as needed based on the
@@ -514,12 +525,10 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 		item->parameters.sampleRate = 44100;
 			item->filename = plugin.memmgr->sysDupStr((wchar_t*)szFn);
 
-			const HANDLE CalcThread = CreateThread(0, 0, CalcWaveformThread, (LPVOID)
-											 item, CREATE_SUSPENDED, NULL);
+			const HANDLE CalcThread = StartThread(CalcWaveformThread, item, (!lowerpriority ?
+												  THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_LOWEST), 0, NULL);
 			if (CalcThread)
 			{
-				SetThreadPriority(CalcThread, (!lowerpriority ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_LOWEST));
-				ResumeThread(CalcThread);
 				if (IsWindow(hWndInner))
 				{
 				timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
@@ -864,8 +873,11 @@ void LoadCUE(wchar_t * szFn)
 			(void)swscanf(str, L"TRACK %d AUDIO", &nCurrentTrack);
 			nCurrentTrack = min(nCurrentTrack, 255);
 			nCueTracks = max(nCueTracks, nCurrentTrack);
+			if (nCurrentTrack > 1)
+			{
 			pCueTracks[nCurrentTrack - 1].szPerformer[0] = 0;
 			pCueTracks[nCurrentTrack - 1].szTitle[0] = 0;
+		}
 		}
 
 		if (nCurrentTrack > 0)
@@ -1060,6 +1072,8 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 
 			if (!FileExists(szWaveCacheFile))
 			{
+				EnterCriticalSection(&processing_cs);
+
 				std::map<std::wstring, HANDLE>::const_iterator itr = processing_list.begin();
 				while (itr != processing_list.end())
 				{
@@ -1068,6 +1082,8 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 					// more processing / duplication
 					if (wcsistr(usable_path, (*itr).first.c_str()))
 					{
+						LeaveCriticalSection(&processing_cs);
+
 						if (IsWindow(hWndInner))
 						{
 						timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
@@ -1085,7 +1101,8 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 				// hang due to quick 'next' actions
 				INT_PTR db_error = FALSE;
 				static const int cpu_count = GetCpuProcs();
-				if (processing_list.size() < cpu_count)
+				const bool can_process = (static_cast<int>(processing_list.size()) < cpu_count);
+				if (can_process)
 				{
 					const HANDLE thread = StartProcessingFile(usable_path, start_playing, db_error);
 					if (thread != NULL)
@@ -1093,7 +1110,10 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 						processing_list[std::wstring(usable_path)] = thread;
 					}
 				}
-				else
+
+				LeaveCriticalSection(&processing_cs);
+				
+				if (!can_process)
 				{
 					if (IsWindow(hWndInner))
 					{
@@ -1281,9 +1301,9 @@ void RefreshInnerWindow(void)
 	}
 }
 
-bool ProcessMenuResult(UINT command, HWND parent)
+bool ProcessMenuResult(const UINT command, HWND parent)
 {
-	switch (LOWORD(command))
+	switch (command)
 	{
 		case ID_SUBMENU_VIEWFILEINFO:
 		{
@@ -1361,6 +1381,8 @@ bool ProcessMenuResult(UINT command, HWND parent)
 
 				ProcessStop();
 
+				EnterCriticalSection(&processing_cs);
+
 				std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
 				while (itr != processing_list.end())
 				{
@@ -1369,7 +1391,7 @@ bool ProcessMenuResult(UINT command, HWND parent)
 					// more processing / duplication
 					if (wcsistr(szFilename, (*itr).first.c_str()))
 					{
-						WaitForSingleObject((*itr).second, INFINITE);
+						WaitForSingleObject((*itr).second, 3000/*/INFINITE/**/);
 						CloseHandle((*itr).second);
 						processing_list.erase(itr);
 						break;
@@ -1378,6 +1400,8 @@ bool ProcessMenuResult(UINT command, HWND parent)
 				}
 
 				processing_list.clear();
+
+				LeaveCriticalSection(&processing_cs);
 
 				// wait a moment so if it was already
 				// processing then that can clean-up
@@ -1439,6 +1463,8 @@ bool ProcessMenuResult(UINT command, HWND parent)
 			SaveNativeIniString(WINAMP_INI, L"Waveseek", L"lowerpriority",
 										   (lowerpriority ? L"1" : NULL));
 
+			EnterCriticalSection(&processing_cs);
+
 			// update the threads that are already running
 			std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
 			while (itr != processing_list.end())
@@ -1451,6 +1477,8 @@ bool ProcessMenuResult(UINT command, HWND parent)
 					ResumeThread(handle);
 				}
 			}
+
+			LeaveCriticalSection(&processing_cs);
 			break;
 		}
 #ifndef _WIN64
@@ -1549,7 +1577,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 	{
 		case WM_COMMAND:	// for what's handled from the accel table
 		{
-			if (ProcessMenuResult(wParam, hWnd))
+			if (ProcessMenuResult(LOWORD(wParam), hWnd))
 			{
 				break;
 			}
@@ -1701,7 +1729,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 								nSample = max(pSampleBuffer[j], nSample);
 							}
 
-							const unsigned short sh = ((nSample * h) / 32767);
+							const unsigned short sh = static_cast<const unsigned short>((nSample * h) / 32767);
 							const int y = (h - sh) / 2;
 
 							if (sh)
@@ -1721,10 +1749,16 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 											(pCueTracks[k].nMillisec < ms))
 										{
 											pCueTracks[k].bDrawn = true;
-											SetDCPenColor(cacheDC, clrCuePoint);
-											MoveToEx(cacheDC, i, y, NULL);
+
+											const COLORREF old_colour =  SetDCPenColor(cacheDC, clrCuePoint);
+											MoveToEx(cacheDC, i - 1, 0, NULL);
+											LineTo(cacheDC, i - 1, h);
+											MoveToEx(cacheDC, i, 0, NULL);
 											LineTo(cacheDC, i, h);
-											MoveToEx(cacheDC, i, y + sh, NULL);
+											/*MoveToEx(cacheDC, i + 1, 0, NULL);
+											LineTo(cacheDC, i + 1, h);*/
+											// need to reset or it'll go wonky
+											SetDCPenColor(cacheDC, old_colour);
 											break;
 										}
 									}
@@ -2105,7 +2139,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 			// whilst also accounting for the selection changing & it then
 			// needing to be set back to the current item if there's none
 			wchar_t archive_override[FILENAME_SIZE] = { 0 };
-			ProcessFilePlayback(((wParam > 0) ? GetPlaylistItemFile((wParam - 1), archive_override) :
+			ProcessFilePlayback(((wParam > 0) ? GetPlaylistItemFile((int)(wParam - 1), archive_override) :
 											  GetPlayingFilename(0, NULL)), false, archive_override);
 			RefreshInnerWindow();
 		}
@@ -2309,17 +2343,23 @@ int PluginInit(void)
 		ServiceBuild(WASABI_API_SVC, WASABI_API_DECODEFILE2, decodeFile2GUID);
 #ifdef WACUP_BUILD
 		WASABI_API_APP = plugin.app;
-		WASABI_API_LNG = plugin.language;
+
+		WASABI_API_START_LANG_DESC(plugin.language, plugin.hDllInstance,
+								   embed_guid, IDS_PLUGIN_NAME, TEXT(
+								   PLUGIN_VERSION), &plugin.description);
 #else
 		ServiceBuild(WASABI_API_SVC, WASABI_API_APP, applicationApiServiceGuid);
 		ServiceBuild(WASABI_API_SVC, WASABI_API_LNG, languageApiGUID);
-#endif
+
 		// TODO add to lang.h
 		WASABI_API_START_LANG(plugin.hDllInstance, embed_guid);
 
 		wchar_t	pluginTitleW[256] = { 0 };
 		StringCchPrintf(pluginTitleW, ARRAYSIZE(pluginTitleW), WASABI_API_LNGSTRINGW(IDS_PLUGIN_NAME), TEXT(PLUGIN_VERSION));
 		plugin.description = (char*)plugin.memmgr->sysDupStr(pluginTitleW);
+#endif
+
+		InitializeCriticalSectionEx(&processing_cs, 400, CRITICAL_SECTION_NO_DEBUG_INFO);
 
 		// restore / process the current file so we're showing something on load
 		// but we delay it a bit until Winamp is in a better state especially if
@@ -2386,6 +2426,8 @@ void PluginQuit()
 	ServiceRelease(WASABI_API_SVC, WASABI_API_LNG, languageApiGUID);
 	ServiceRelease(WASABI_API_SVC, WASABI_API_APP, applicationApiServiceGuid);
 #endif
+
+	DeleteCriticalSection(&processing_cs);
 }
 
 void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const
@@ -2407,8 +2449,7 @@ extern "C" __declspec(dllexport) winampGeneralPurposePlugin * winampGetGeneralPu
 extern "C" __declspec(dllexport) int winampUninstallPlugin(HINSTANCE hDllInst, HWND hwndDlg, int param)
 {
 	// prompt to remove our settings with default as no (just incase)
-	if (MessageBox(hwndDlg, WASABI_API_LNGSTRINGW(IDS_DO_YOU_ALSO_WANT_TO_REMOVE_SETTINGS),
-				   (LPWSTR)plugin.description, MB_YESNO | MB_DEFBUTTON2) == IDYES)
+	if (plugin.language->UninstallSettingsPrompt(reinterpret_cast<const wchar_t*>(plugin.description)))
 	{
 		SaveNativeIniString(WINAMP_INI, L"Waveseek", 0, 0);
 		no_uninstall = 0;
