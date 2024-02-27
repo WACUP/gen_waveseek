@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.19.3"
+#define PLUGIN_VERSION "3.19.4"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -1561,6 +1561,30 @@ LRESULT CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 }
 #endif
 
+void CALLBACK CreateTooltipTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
+{
+
+	KillTimer(hwnd, idEvent);
+
+	if (!IsWindow(hWndToolTip))
+	{
+		hWndToolTip = CreateWindowEx(WS_EX_NOPARENTNOTIFY | WS_EX_TOPMOST,
+									 TOOLTIPS_CLASS, NULL, TTS_NOPREFIX |
+									 TTS_ALWAYSTIP, 0, 0, 0, 0, hwnd,
+									 NULL, plugin.hDllInstance, NULL);
+	}
+
+	if (IsWindow(hWndToolTip))
+	{
+		ti.cbSize = sizeof(TOOLINFO);
+		ti.uFlags = TTF_TRACK | TTF_TRANSPARENT |
+					TTF_ABSOLUTE | TTF_CENTERTIP;
+		ti.hinst = plugin.hDllInstance;
+		PostMessage(hWndToolTip, TTM_ADDTOOL, NULL, (LPARAM)&ti);
+		SkinToolTip(hWndToolTip);
+	}
+}
+
 LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	// if you need to do other message handling then you can just place this first and
@@ -1602,19 +1626,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		}
 		case WM_CREATE:
 		{
-			hWndToolTip = CreateWindowEx(WS_EX_TOPMOST, TOOLTIPS_CLASSW, NULL, WS_POPUP | TTS_NOPREFIX |
-										 TTS_ALWAYSTIP, 0, 0, 0, 0, hWnd, NULL, plugin.hDllInstance, NULL);
-			if (IsWindow(hWndToolTip))
-			{
-				ti.cbSize = sizeof(TOOLINFO);
-				ti.uFlags = TTF_IDISHWND | TTF_TRACK | TTF_ABSOLUTE |
-							TTF_TRANSPARENT | TTF_CENTERTIP;
-				ti.hwnd = (HWND)lParam;
-				ti.hinst = plugin.hDllInstance;
-				ti.uId = (UINT_PTR)lParam;
-				PostMessage(hWndToolTip, TTM_ADDTOOL, NULL, (LPARAM)&ti);
-				SkinToolTip(hWndToolTip);
-			}
+			SetTimer(hWnd, 8888, 250, CreateTooltipTimerProc);
 
 			// if we've been created but processing is already
 			// underway then we need to get things going on to
