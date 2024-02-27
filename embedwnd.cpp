@@ -9,7 +9,7 @@
 //HMENU main_menu = 0, windows_menu = 0;
 int height = 0, width = 0;
 BOOL visible = FALSE, old_visible = FALSE, self_update = FALSE;
-RECT initial[2] = {0};
+RECT initial[2] = { 0 };
 extern LRESULT delay_load;
 
 HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID embedWindowGUID)
@@ -103,7 +103,7 @@ void DestroyEmbeddedWindow(embedWindowState* embedWindow)
 	{
 		if (main_menu == NULL)
 		{
-		main_menu = GetNativeMenu((WPARAM)0);
+			main_menu = GetNativeMenu((WPARAM)0);
 		}
 
 		if (main_menu != NULL)
@@ -131,7 +131,7 @@ void DestroyEmbeddedWindow(embedWindowState* embedWindow)
 	{
 		if (windows_menu == NULL)
 		{
-		windows_menu = GetNativeMenu((WPARAM)4);
+			windows_menu = GetNativeMenu((WPARAM)4);
 		}
 
 		if (windows_menu != NULL)

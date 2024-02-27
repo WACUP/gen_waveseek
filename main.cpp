@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.19.2"
+#define PLUGIN_VERSION "3.19.3"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -109,7 +109,7 @@ void ProcessStop(const bool is_closing = false);
 typedef In_Module *(*PluginGetter)();
 
 #define TIMER_ID 31337
-#define TIMER_FREQ 125	// ~8fps
+#define TIMER_FREQ 125		// ~8fps
 #define TIMER_LIVE_FREQ 33	// ~30fps
 
 wchar_t
@@ -236,7 +236,7 @@ unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer, const unsig
 }
 
 void ClearProcessingHandles(void)
-	{
+{
 	EnterCriticalSection(&processing_cs);
 
 	std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
@@ -247,10 +247,10 @@ void ClearProcessingHandles(void)
 		{
 			WaitForSingleObjectEx(handle, 3000/*/INFINITE/**/, TRUE);
 
-		if (handle != NULL)
-		{
-			CloseHandle(handle);
-		}
+			if (handle != NULL)
+			{
+				CloseHandle(handle);
+			}
 		}
 		itr = processing_list.erase(itr);
 	}
@@ -308,33 +308,33 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	int lengthMS = -1;
 	if (!kill_threads)
 	{
-	if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL,
-							&item->db_error) && buf[0])
+		if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL,
+								&item->db_error) && buf[0])
 		{
-		lengthMS = WStr2I(buf);
-	}
-	else
-	{
-		basicFileInfoStructW bfiW = { item->filename, 0, -1, NULL, 0 };
-		if (GetBasicFileInfo(&bfiW, TRUE, TRUE))
-		{
-			lengthMS = (bfiW.length * 1000);
+			lengthMS = WStr2I(buf);
 		}
-	}
+		else
+		{
+			basicFileInfoStructW bfiW = { item->filename, 0, -1, NULL, 0 };
+			if (GetBasicFileInfo(&bfiW, TRUE, TRUE))
+			{
+				lengthMS = (bfiW.length * 1000);
+			}
+		}
 	}
 
 	// without a valid length we've not got much
 	// chance of reliably processing this file
 	if (!kill_threads && (lengthMS > 0))
-			{
-			decoder = (WASABI_API_DECODEFILE2 ? WASABI_API_DECODEFILE2->OpenAudioBackground(item->filename, &item->parameters) : NULL);
+	{
+		decoder = (WASABI_API_DECODEFILE2 ? WASABI_API_DECODEFILE2->OpenAudioBackground(item->filename, &item->parameters) : NULL);
 
-			if (decoder)
-			{
-				nFramePerWindow = MulDiv(lengthMS, item->parameters.sampleRate,
-										 SAMPLE_BUFFER_SIZE * 1000) + 1;
-			}
+		if (decoder)
+		{
+			nFramePerWindow = MulDiv(lengthMS, item->parameters.sampleRate,
+											   SAMPLE_BUFFER_SIZE * 1000) + 1;
 		}
+	}
 
 	if (decoder)
 	{
@@ -511,7 +511,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 		WASABI_API_DECODEFILE2 && WASABI_API_DECODEFILE2->DecoderExists(szFn))
 	{
 		if (!visible && has_inner_wnd)
-	{
+		{
 			visible = TRUE;
 		}
 
@@ -519,10 +519,10 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 		if (item)
 		{
 			item->db_error = db_error;
-		item->parameters.flags = AUDIOPARAMETERS_MAXCHANNELS | AUDIOPARAMETERS_MAXSAMPLERATE | AUDIOPARAMETERS_NO_RESAMPLE;
-		item->parameters.channels = 2;
-		item->parameters.bitsPerSample = 24;
-		item->parameters.sampleRate = 44100;
+			item->parameters.flags = AUDIOPARAMETERS_MAXCHANNELS | AUDIOPARAMETERS_MAXSAMPLERATE | AUDIOPARAMETERS_NO_RESAMPLE;
+			item->parameters.channels = 2;
+			item->parameters.bitsPerSample = 24;
+			item->parameters.sampleRate = 44100;
 			item->filename = plugin.memmgr->sysDupStr((wchar_t*)szFn);
 
 			const HANDLE CalcThread = StartThread(CalcWaveformThread, item, (!lowerpriority ?
@@ -531,7 +531,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 			{
 				if (IsWindow(hWndInner))
 				{
-				timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
+					timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
 				}
 				bIsProcessing = true;
 				return CalcThread;
@@ -539,7 +539,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 
 			plugin.memmgr->sysFree((LPVOID)item->filename);
 			plugin.memmgr->sysFree((LPVOID)item);
-	}
+		}
 	}
 
 #ifndef _WIN64
@@ -750,7 +750,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 
 					if (IsWindow(hWndInner))
 					{
-					timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
+						timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
 					}
 					bIsProcessing = true;
 				}
@@ -801,8 +801,8 @@ void ProcessStop(const bool is_closing)
 	{
 		if (IsWindow(hWndInner))
 		{
-		timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
-	}
+			timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
+		}
 	}
 	else if (IsWindow(hWndInner))
 	{
@@ -812,7 +812,7 @@ void ProcessStop(const bool is_closing)
 		{
 			if (IsWindow(hWndInner))
 			{
-			InvalidateRect(hWndInner, NULL, FALSE);
+				InvalidateRect(hWndInner, NULL, FALSE);
 			}
 			timer_id = 0;
 		}
@@ -875,9 +875,9 @@ void LoadCUE(wchar_t * szFn)
 			nCueTracks = max(nCueTracks, nCurrentTrack);
 			if (nCurrentTrack > 1)
 			{
-			pCueTracks[nCurrentTrack - 1].szPerformer[0] = 0;
-			pCueTracks[nCurrentTrack - 1].szTitle[0] = 0;
-		}
+				pCueTracks[nCurrentTrack - 1].szPerformer[0] = 0;
+				pCueTracks[nCurrentTrack - 1].szTitle[0] = 0;
+			}
 		}
 
 		if (nCurrentTrack > 0)
@@ -936,8 +936,8 @@ LPWSTR GetTooltipText(HWND hWnd, int pos, int lengthInMS)
 	}
 
 	wchar_t position[32] = { 0 }, total[32] = { 0 };
-	plugin.language->FormattedTimeString(position, ARRAYSIZE(position), sec, 0);
-	plugin.language->FormattedTimeString(total, ARRAYSIZE(total), total_sec, 0);
+	plugin.language->FormattedTimeString(position, ARRAYSIZE(position), sec, 0, NULL);
+	plugin.language->FormattedTimeString(total, ARRAYSIZE(total), total_sec, 0, NULL);
 
 	if (nTrack >= 0)
 	{
@@ -971,20 +971,20 @@ BOOL AllowedFile(const wchar_t * szFn)
 {
 	LPCWSTR extension = FindPathExtension(szFn);
 	if (extension)
-		{
-			// for extensions that we know are going to trigger plug-ins that are
-			// known to not be thread safe then we'll crudely add them here so as
-			// avoid processing until (hopefully) those plug-ins can be improved!
+	{
+		// for extensions that we know are going to trigger plug-ins that are
+		// known to not be thread safe then we'll crudely add them here so as
+		// avoid processing until (hopefully) those plug-ins can be improved!
 		if (SameStr(extension, L"2sf") || SameStr(extension, L"mini2sf") ||
 			SameStr(extension, L"gsf") || SameStr(extension, L"minigsf") ||
 			SameStr(extension, L"ncsf") || SameStr(extension, L"minincsf") ||
 			SameStr(extension, L"qsf") || SameStr(extension, L"minisqsf") ||
 			SameStr(extension, L"snsf") || SameStr(extension, L"minisnsf") ||
 			SameStr(extension, L"spc") || plugin.albumart->CanLoad(szFn))
-			{
-				return FALSE;
-			}
+		{
+			return FALSE;
 		}
+	}
 	return TRUE;
 }
 
@@ -1086,7 +1086,7 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 
 						if (IsWindow(hWndInner))
 						{
-						timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
+							timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
 						}
 
 						bIsProcessing = true;
@@ -1117,7 +1117,7 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 				{
 					if (IsWindow(hWndInner))
 					{
-					timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
+						timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
 					}
 					bIsProcessing = true;
 					return;
@@ -1126,7 +1126,7 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 			else
 			{
 				const HANDLE h = CreateFile(szWaveCacheFile, GENERIC_READ, NULL, NULL,
-									  OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+											OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
 				if (h != INVALID_HANDLE_VALUE)
 				{
 					DWORD dw = 0;
@@ -1374,7 +1374,7 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 
 				if (IsWindow(hWndInner))
 				{
-				timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
+					timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
 				}
 				bIsProcessing = false;
 				//kill_threads = 1;
@@ -1656,9 +1656,9 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			const HDC hdc = ((kill_threads != 2) ? BeginPaint(hWnd, &psPaint) : NULL);
 			if (hdc)
 			{
-			// we get the client area instead of
-			// using the paint area as it's not
-			// the same if partially off-screen
+				// we get the client area instead of
+				// using the paint area as it's not
+				// the same if partially off-screen
 				RECT wnd = { 0 };
 				GetClientRect(hWnd, &wnd);
 
@@ -1698,15 +1698,15 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 				if (paint_allowed)
 				{
-						// make the width a bit less so the right-edge
-						// can allow for the end of the track to be
-						// correctly selected or the tooltip show up
-						--w;
+					// make the width a bit less so the right-edge
+					// can allow for the end of the track to be
+					// correctly selected or the tooltip show up
+					--w;
 
 					if ((bIsLoaded || bIsProcessing) && !bUnsupported)
 					{
 						SelectObject(cacheDC, GetStockObject(DC_PEN));
-
+						
 						SetDCPenColor(cacheDC, (nSongPos ? clrWaveformPlayed : clrWaveform));
 
 						const bool has_cue = (showCuePoints && (nCueTracks > 0));
@@ -1768,11 +1768,11 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 						if (has_cue)
 						{
-						for (int k = 0; k < nCueTracks; k++)
-						{
-							pCueTracks[k].bDrawn = false;
+							for (int k = 0; k < nCueTracks; k++)
+							{
+								pCueTracks[k].bDrawn = false;
+							}
 						}
-					}
 					}
 					else
 					{
@@ -1844,14 +1844,14 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 											// only fill in things when its needed
 											const HRGN rgn = (playing ? CreatePolygonRgn(points, num_point,
 																		  ALTERNATE/*/WINDING/**/) : NULL);
-												if (rgn)
+											if (rgn)
+											{
+												if (br)
 												{
-													if (br)
-													{
-														FillRgn(thisdc, rgn, br);
-													}
-													DeleteObject(rgn);
+													FillRgn(thisdc, rgn, br);
 												}
+												DeleteObject(rgn);
+											}
 											plugin.memmgr->sysFree(points);
 										}
 									}
@@ -1914,13 +1914,13 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 						}
 					}
 
-							// and now restore so that we get drawn correctly
-							++w;
+					// and now restore so that we get drawn correctly
+					++w;
 
-				BitBlt(hdc, 0, 0, w, h, cacheDC, 0, 0, SRCCOPY);
+					BitBlt(hdc, 0, 0, w, h, cacheDC, 0, 0, SRCCOPY);
 				}
 
-			EndPaint(hWnd, &psPaint);
+				EndPaint(hWnd, &psPaint);
 			}
 			return 0;
 		}
@@ -2045,7 +2045,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 					trackMouse.hwndTrack = hWnd;
 					TrackMouseEvent(&trackMouse);
 
-					POINT pt = {xPos, yPos};
+					POINT pt = { xPos, yPos };
 					ClientToScreen(hWndWaveseek, &pt);
 					ti.lpszText = GetTooltipText(hWnd, xPos, lengthInMS);
 
@@ -2140,7 +2140,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 			// needing to be set back to the current item if there's none
 			wchar_t archive_override[FILENAME_SIZE] = { 0 };
 			ProcessFilePlayback(((wParam > 0) ? GetPlaylistItemFile((int)(wParam - 1), archive_override) :
-											  GetPlayingFilename(0, NULL)), false, archive_override);
+											    GetPlayingFilename(0, NULL)), false, archive_override);
 			RefreshInnerWindow();
 		}
 		else if (lParam == IPC_GET_EMBEDIF_NEW_HWND)
@@ -2248,6 +2248,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				wcex.lpszClassName = L"WaveseekWnd";
 				wcex.hInstance = plugin.hDllInstance;
 				wcex.lpfnWndProc = InnerWndProc;
+				wcex.style = CS_DBLCLKS; // so we get double-clicks
 				wndclass = RegisterClassEx(&wcex);
 				if (wndclass)
 				{
@@ -2317,7 +2318,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 			// it's non-legacy mode has become the default instance
 			if (IsWindow(hWndInner))
 			{
-			timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
+				timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
 			}
 		}*/
 	}
@@ -2377,7 +2378,8 @@ void PluginConfig()
 	HMENU hMenu = WASABI_API_LOADMENUW(IDR_CONTEXTMENU);
 	HMENU popup = GetSubMenu(hMenu, 0);
 
-	MENUITEMINFO i = {sizeof(i), MIIM_ID | MIIM_STATE | MIIM_TYPE, MFT_STRING, MFS_UNCHECKED | MFS_DISABLED, 1};
+	MENUITEMINFO i = { sizeof(i), MIIM_ID | MIIM_STATE | MIIM_TYPE,
+					   MFT_STRING, MFS_UNCHECKED | MFS_DISABLED, 1 };
 	i.dwTypeData = (LPWSTR)plugin.description;
 	InsertMenuItem(popup, 0, TRUE, &i);
 
