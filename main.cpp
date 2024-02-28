@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.19.4"
+#define PLUGIN_VERSION "3.19.5"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -1626,7 +1626,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		}
 		case WM_CREATE:
 		{
-			SetTimer(hWnd, 8888, 250, CreateTooltipTimerProc);
+			SetTimer(hWnd, 8888, 333, CreateTooltipTimerProc);
 
 			// if we've been created but processing is already
 			// underway then we need to get things going on to
@@ -2261,6 +2261,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				wcex.hInstance = plugin.hDllInstance;
 				wcex.lpfnWndProc = InnerWndProc;
 				wcex.style = CS_DBLCLKS; // so we get double-clicks
+				wcex.hCursor = GetArrowCursor(false);
 				wndclass = RegisterClassEx(&wcex);
 				if (wndclass)
 				{
