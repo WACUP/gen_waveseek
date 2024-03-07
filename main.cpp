@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.19.5"
+#define PLUGIN_VERSION "3.20"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -83,7 +83,6 @@ UINT_PTR timer_id = 0;
 api_service *WASABI_API_SVC = NULL;
 api_decodefile2 *WASABI_API_DECODEFILE2 = NULL;
 api_application *WASABI_API_APP = NULL;
-api_skin *WASABI_API_SKIN = NULL;
 
 SETUP_API_LNG_VARS;
 
@@ -1154,50 +1153,6 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 	}
 }
 
-int GetPrivateProfileHex(LPCWSTR lpAppName, LPCWSTR lpKeyName, INT nDefault, LPCWSTR lpFileName)
-{
-	wchar_t str[16] = { 0 }, *s = str;
-	if (!GetPrivateProfileStringW(lpAppName, lpKeyName, L"", str, ARRAYSIZE(str), lpFileName) || !*str)
-	{
-		return nDefault;
-	}
-
-	if (*s == '#')
-	{
-		++s;
-	}
-
-	int val = nDefault;
-	if (s && *s)
-	{
-		val = WStr2L(s, &s, 16);
-	}
-
-	const int r = ((val >> 16) & 255),
-			  g = ((val >> 8) & 255),
-			  b = (val & 255);
-	return RGB(r, g, b);
-}
-
-COLORREF GetSkinColour(LPCWSTR element_id, COLORREF default_colour)
-{
-	if (!WASABI_API_SKIN)
-	{
-		ServiceBuild(WASABI_API_SVC, WASABI_API_SKIN, skinApiServiceGuid);
-	}
-
-	if (WASABI_API_SKIN)
-	{
-		LPCWSTR colour_group = NULL;
-		const ARGB32 *colour = WASABI_API_SKIN->skin_getColorElementRef(element_id, &colour_group);
-		if (colour != NULL)
-		{
-			return WASABI_API_SKIN->filterSkinColor(*colour, element_id, colour_group);
-		}
-	}
-	return default_colour;
-}
-
 void ProcessSkinChange(BOOL skip_refresh = FALSE)
 {
 	clrBackground = WADlg_getColor(WADLG_ITEMBG);
@@ -1251,17 +1206,19 @@ void ProcessSkinChange(BOOL skip_refresh = FALSE)
 			clrWaveformPlayed = GetPrivateProfileHex(L"colours", L"wave_playing", clrWaveformPlayed, szBuffer);
 			clrWaveformFailed = GetPrivateProfileHex(L"colours", L"wave_failed", clrWaveformFailed, szBuffer);
 		}
+#ifndef _WIN64
 		else
 		{
 			// otherwise look for (if loaded) anything within the
 			// modern skin configuration for it's override colours
-			clrBackground = GetSkinColour(L"plugin.waveseeker.background", clrBackground);
-			clrCuePoint = GetSkinColour(L"plugin.waveseeker.cue_point", clrCuePoint);
-			clrGeneratingText = GetSkinColour(L"plugin.waveseeker.status_text", clrGeneratingText);
-			clrWaveform = GetSkinColour(L"plugin.waveseeker.wave_normal", clrWaveform);
-			clrWaveformPlayed = GetSkinColour(L"plugin.waveseeker.wave_playing", clrWaveformPlayed);
-			clrWaveformFailed = GetSkinColour(L"plugin.waveseeker.wave_failed", clrWaveformFailed);
+			clrBackground = GetFFSkinColour(L"plugin.waveseeker.background", clrBackground);
+			clrCuePoint = GetFFSkinColour(L"plugin.waveseeker.cue_point", clrCuePoint);
+			clrGeneratingText = GetFFSkinColour(L"plugin.waveseeker.status_text", clrGeneratingText);
+			clrWaveform = GetFFSkinColour(L"plugin.waveseeker.wave_normal", clrWaveform);
+			clrWaveformPlayed = GetFFSkinColour(L"plugin.waveseeker.wave_playing", clrWaveformPlayed);
+			clrWaveformFailed = GetFFSkinColour(L"plugin.waveseeker.wave_failed", clrWaveformFailed);
 		}
+#endif
 	}
 
 	if (!skip_refresh)
@@ -2436,7 +2393,6 @@ void PluginQuit()
 	}
 
 	ServiceRelease(WASABI_API_SVC, WASABI_API_DECODEFILE2, decodeFile2GUID);
-	ServiceRelease(WASABI_API_SVC, WASABI_API_SKIN, skinApiServiceGuid);
 #ifndef WACUP_BUILD
 	ServiceRelease(WASABI_API_SVC, WASABI_API_LNG, languageApiGUID);
 	ServiceRelease(WASABI_API_SVC, WASABI_API_APP, applicationApiServiceGuid);
