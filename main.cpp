@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.20"
+#define PLUGIN_VERSION "3.21.2"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -234,23 +234,28 @@ unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer, const unsig
 	return nAmplitude;
 }
 
+void abort_processing_thread(const HANDLE handle)
+{
+	if (handle != NULL)
+	{
+		if (WaitForSingleObjectEx(handle, 3000/*/INFINITE/**/, TRUE) == WAIT_TIMEOUT)
+		{
+			CloseHandle(handle);
+		}
+	}
+}
+
 void ClearProcessingHandles(void)
 {
+	ProcessStop((kill_threads == 2));
+
 	EnterCriticalSection(&processing_cs);
 
 	std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
 	while (itr != processing_list.end())
 	{
-		const HANDLE handle = (*itr).second;
-		if (handle != NULL)
-		{
-			WaitForSingleObjectEx(handle, 3000/*/INFINITE/**/, TRUE);
+		abort_processing_thread((*itr).second);
 
-			if (handle != NULL)
-			{
-				CloseHandle(handle);
-			}
-		}
 		itr = processing_list.erase(itr);
 	}
 
@@ -278,7 +283,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	CalcThreadParams *item = (CalcThreadParams *)lp;
 	ifc_audiostream* decoder = NULL;
 	unsigned int nFramePerWindow = 0;
-
+	bool reentrant = false;
 	wchar_t buf[16] = { 0 };
 	extendedFileInfoStructW efis = { item->filename, (audioOnly ? L"type" :
 										  L"length"), buf, ARRAYSIZE(buf) };
@@ -287,8 +292,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	// as processing video can cause some problems...
 	if (!kill_threads && audioOnly)
 	{
-		if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL,
-						&item->db_error) && !!WStr2I(buf))
+		if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL, &reentrant,
+								    &item->db_error) && !!WStr2I(buf))
 		{
 			goto abort;
 		}
@@ -307,8 +312,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	int lengthMS = -1;
 	if (!kill_threads)
 	{
-		if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL,
-								&item->db_error) && buf[0])
+		if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL, &reentrant,
+										   &item->db_error) && buf[0])
 		{
 			lengthMS = WStr2I(buf);
 		}
@@ -410,6 +415,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 				// so that a message is provided to the user else
 				// it can cause confusion due to looking broken.
 				bUnsupported = 1;
+				break;
 			}
 
 			// if we're beyond the maximum expected samples then
@@ -443,6 +449,13 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 			}
 		}
 	}
+	else
+	{
+		// if we don't support it then we need to flag it
+		// so that a message is provided to the user else
+		// it can cause confusion due to looking broken.
+		bUnsupported = 1;
+	}
 
 abort:
 	if (!kill_threads)
@@ -458,9 +471,11 @@ abort:
 			if (wcsistr(item->filename, (*itr).first.c_str()))
 			{
 				CloseHandle((*itr).second);
+
 				processing_list.erase(itr);
 				break;
 			}
+
 			++itr;
 		}
 
@@ -474,6 +489,8 @@ abort:
 			// as needed based on the
 			// current playback state
 			ProcessStop();
+
+			bIsProcessing = false;
 		}
 	}
 
@@ -494,7 +511,33 @@ abort:
 	return 0;
 }
 
-HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_PTR db_error)
+void start_live_timer(void)
+{
+	if (IsWindow(hWndInner))
+	{
+		timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
+	}
+
+	bIsProcessing = true;
+}
+
+int calc_thread_started_callback(HANDLE thread, LPVOID parameter)
+{
+	if (thread != NULL)
+	{
+		start_live_timer();
+	}
+	else if (parameter)
+	{
+		CalcThreadParams* item = (CalcThreadParams*)parameter;
+		plugin.memmgr->sysFree((LPVOID)item->filename);
+		plugin.memmgr->sysFree((LPVOID)item);
+	}
+	return 1;
+}
+
+HANDLE StartProcessingFile(const wchar_t *szFn, const wchar_t *szArchiveFn,
+						   const bool start_playing, const INT_PTR db_error)
 {
 #ifndef _WIN64
 	pModule = NULL;
@@ -524,20 +567,12 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 			item->parameters.sampleRate = 44100;
 			item->filename = plugin.memmgr->sysDupStr((wchar_t*)szFn);
 
-			const HANDLE CalcThread = StartThread(CalcWaveformThread, item, (!lowerpriority ?
-												  THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_LOWEST), 0, NULL);
+			const HANDLE CalcThread = StartThread(CalcWaveformThread, item, (!lowerpriority ? THREAD_PRIORITY_HIGHEST :
+															 THREAD_PRIORITY_LOWEST), 0, calc_thread_started_callback);
 			if (CalcThread)
 			{
-				if (IsWindow(hWndInner))
-				{
-					timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
-				}
-				bIsProcessing = true;
 				return CalcThread;
 			}
-
-			plugin.memmgr->sysFree((LPVOID)item->filename);
-			plugin.memmgr->sysFree((LPVOID)item);
 		}
 	}
 
@@ -747,11 +782,7 @@ HANDLE StartProcessingFile(const wchar_t * szFn, BOOL start_playing, const INT_P
 						return NULL;
 					}
 
-					if (IsWindow(hWndInner))
-					{
-						timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
-					}
-					bIsProcessing = true;
+					start_live_timer();
 				}
 			}
 		}
@@ -807,6 +838,11 @@ void ProcessStop(const bool is_closing)
 	{
 		KillTimer(hWndInner, TIMER_ID);
 
+		if (is_closing)
+		{
+			KillTimer(hWndInner, 8889);
+		}
+
 		if (timer_id)
 		{
 			if (IsWindow(hWndInner))
@@ -816,8 +852,6 @@ void ProcessStop(const bool is_closing)
 			timer_id = 0;
 		}
 	}
-
-	bIsProcessing = false;
 }
 
 void FinishProcessingFile(LPCWSTR szCacheFile, unsigned short *pBuffer)
@@ -987,7 +1021,18 @@ BOOL AllowedFile(const wchar_t * szFn)
 	return TRUE;
 }
 
-void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wchar_t *szArchiveFn)
+void RefreshInnerWindow(void)
+{
+	// deal with no playback to
+	// ensure the window update
+	if (!timer_id && IsWindow(hWndInner))
+	{
+		InvalidateRect(hWndInner, NULL, FALSE);
+	}
+}
+
+const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
+							   const wchar_t *szArchiveFn, const bool only_check_exists)
 {
 	if (szFn && *szFn)
 	{
@@ -1001,6 +1046,12 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 		ProcessPath((archive ? szArchiveFn : szFn), usable_path,
 								 ARRAYSIZE(usable_path), FALSE);
 
+		// we can sometimes see this message before the following
+		// delay load message so we need to ensure that the paths
+		// are setup correctly otherwise we get wrongly located
+		// waveseek_in_*.dll in the music folders loaded from :(
+		GetFilePaths();
+
 		if (wcsistr(szFilename, usable_path) && bIsProcessing)
 		{
 			// if we're already processing and we're asked
@@ -1013,7 +1064,9 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 			{
 				bIsCurrent = true;
 			}
-			return;
+
+			RefreshInnerWindow();
+			return true;
 		}
 
 		ProcessStop();
@@ -1071,6 +1124,11 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 
 			if (!FileExists(szWaveCacheFile))
 			{
+				if (only_check_exists)
+				{
+					return false;
+				}
+
 				EnterCriticalSection(&processing_cs);
 
 				std::map<std::wstring, HANDLE>::const_iterator itr = processing_list.begin();
@@ -1083,14 +1141,12 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 					{
 						LeaveCriticalSection(&processing_cs);
 
-						if (IsWindow(hWndInner))
-						{
-							timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
-						}
+						start_live_timer();
 
-						bIsProcessing = true;
-						return;
+						RefreshInnerWindow();
+						return true;
 					}
+
 					++itr;
 				}
 
@@ -1100,10 +1156,12 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 				// hang due to quick 'next' actions
 				INT_PTR db_error = FALSE;
 				static const int cpu_count = GetCpuProcs();
-				const bool can_process = (static_cast<int>(processing_list.size()) < cpu_count);
+				const int count = static_cast<int>(processing_list.size());
+				const bool can_process = (count < cpu_count);
 				if (can_process)
 				{
-					const HANDLE thread = StartProcessingFile(usable_path, start_playing, db_error);
+					const HANDLE thread = StartProcessingFile(usable_path, szArchiveFn,
+															  start_playing, db_error);
 					if (thread != NULL)
 					{
 						processing_list[std::wstring(usable_path)] = thread;
@@ -1112,15 +1170,7 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 
 				LeaveCriticalSection(&processing_cs);
 				
-				if (!can_process)
-				{
-					if (IsWindow(hWndInner))
-					{
-						timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
-					}
-					bIsProcessing = true;
-					return;
-				}
+				start_live_timer();
 			}
 			else
 			{
@@ -1134,6 +1184,7 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 					if (dw > 0)
 					{
 						bIsLoaded = true;
+						return true;
 					}
 				}
 			}
@@ -1151,6 +1202,10 @@ void ProcessFilePlayback(const wchar_t *szFn, const bool start_playing, const wc
 		ti.lpszText = GetTooltipText(hWndInner, pt.x, lengthInMS);
 		PostMessage(hWndToolTip, TTM_SETTOOLINFO, 0, (LPARAM)&ti);
 	}
+
+	RefreshInnerWindow();
+
+	return false;
 }
 
 void ProcessSkinChange(BOOL skip_refresh = FALSE)
@@ -1247,15 +1302,26 @@ void ClearCacheFolder(const bool mode)
 	}
 }
 
-void RefreshInnerWindow(void)
+void CALLBACK ProcessFileTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
 {
-	if (!timer_id)	// deal with no playback to
-	{				// ensure the window update
-		if (IsWindow(hWndInner))
+	KillTimer(hwnd, idEvent);
+
+	// update as needed to match the new setting
+	// with fallback to the current playing if
+	// there's no selection or it's been disabled
+	int index = GetPlaylistPosition();
+	if (clickTrack && GetSelectedCount())
+	{
+		const int sel = GetNextSelected((WPARAM)-1);
+		if (sel != -1)
 		{
-			InvalidateRect(hWndInner, NULL, FALSE);
+			index = sel;
 		}
 	}
+
+	wchar_t archive_override[FILENAME_SIZE] = { 0 };
+	ProcessFilePlayback(GetPlaylistItemFile(index, archive_override), false,
+												   archive_override, false);
 }
 
 bool ProcessMenuResult(const UINT command, HWND parent)
@@ -1286,8 +1352,6 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 			// trigger any in-progress processing to be cancelled
 			// so nothing should be being re-saved out on clearing
 			kill_threads = 1;
-
-			ProcessStop();
 
 			ClearProcessingHandles();
 
@@ -1334,7 +1398,6 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 					timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
 				}
 				bIsProcessing = false;
-				//kill_threads = 1;
 
 				ProcessStop();
 
@@ -1348,11 +1411,12 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 					// more processing / duplication
 					if (wcsistr(szFilename, (*itr).first.c_str()))
 					{
-						WaitForSingleObject((*itr).second, 3000/*/INFINITE/**/);
-						CloseHandle((*itr).second);
+						abort_processing_thread((*itr).second);
+
 						processing_list.erase(itr);
 						break;
 					}
+
 					++itr;
 				}
 
@@ -1377,20 +1441,7 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 			// update as needed to match the new setting
 			// with fallback to the current playing if
 			// there's no selection or it's been disabled
-			int index = GetPlaylistPosition();
-			if (clickTrack && GetSelectedCount())
-			{
-				const int sel = GetNextSelected((WPARAM)-1);
-				if (sel != -1)
-				{
-					index = sel;
-				}
-			}
-
-			wchar_t archive_override[FILENAME_SIZE] = { 0 };
-			ProcessFilePlayback(GetPlaylistItemFile(index, archive_override),
-													false, archive_override);
-			RefreshInnerWindow();
+			SetTimer(hWndInner, 8889, 50, ProcessFileTimerProc);
 			break;
 		}
 		case ID_SUBMENU_SHOWCUEPOINTS:
@@ -1426,7 +1477,7 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 			std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
 			while (itr != processing_list.end())
 			{
-				HANDLE handle = (*itr).second;
+				const HANDLE handle = (*itr).second;
 				if (handle != NULL)
 				{
 					SuspendThread(handle);
@@ -1520,7 +1571,6 @@ LRESULT CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 void CALLBACK CreateTooltipTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
 {
-
 	KillTimer(hwnd, idEvent);
 
 	if (!IsWindow(hWndToolTip))
@@ -1662,8 +1712,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 					lastWnd = wnd;
 				}
 
-				SetBkColor(cacheDC, clrBackground);
-				ExtTextOut(cacheDC, 0, 0, ETO_OPAQUE, &wnd, NULL, 0, 0);
+				FillRectWithColour(cacheDC, &wnd, clrBackground, TRUE);
 
 				if (paint_allowed)
 				{
@@ -1771,8 +1820,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 								const HBITMAP hbmMem2 = CreateCompatibleBitmap(hdc, w, h),
 											  hbmOld2 = (HBITMAP)SelectObject(hdcMem2, hbmMem2);
 
-								SetBkColor(hdcMem2, clrBackground);
-								ExtTextOut(hdcMem2, 0, 0, ETO_OPAQUE, &wnd, NULL, 0, 0);
+								FillRectWithColour(hdcMem2, &wnd, clrBackground, TRUE);
 
 								// draw a sine wave to indicate we're still
 								// there but that we've not got anything to
@@ -2062,14 +2110,14 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 {
 	if (uMsg == WM_WA_IPC)
 	{
-		if (lParam == IPC_PLAYING_FILEW)
+		if ((lParam == IPC_PLAYING_FILEW) || ((lParam == IPC_CB_MISC) &&
+			((wParam == IPC_CB_MISC_TITLE) || (wParam == IPC_CB_MISC_STATUS))) ||
+			((lParam == IPC_PLITEM_SELECTED_CHANGED) && clickTrack))
 		{
-			// we can sometimes see this message before the following
-			// delay load message so we need to ensure that the paths
-			// are setup correctly otherwise we get wrongly located
-			// waveseek_in_*.dll in the music folders loaded from :(
-			GetFilePaths();
-			ProcessFilePlayback((const wchar_t*)wParam, true, NULL);
+			// update as needed to match the new setting
+			// with fallback to the current playing if
+			// there's no selection or it's been disabled
+			SetTimer(hWndInner, 8889, 50, ProcessFileTimerProc);
 		}
 		else if (lParam == IPC_STOPPLAYING)
 		{
@@ -2080,37 +2128,6 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 			{
 				ProcessStop(((const stopPlayingInfoStructEx*)wParam)->is_closing);
 			}
-		}
-		else if ((lParam == IPC_CB_MISC) && ((wParam == IPC_CB_MISC_TITLE) ||
-											 (wParam == IPC_CB_MISC_STATUS)))
-		{
-			// update as needed to match the new setting
-			// with fallback to the current playing if
-			// there's no selection or it's been disabled
-			int index = GetPlaylistPosition();
-			if (clickTrack && GetSelectedCount())
-			{
-				const int sel = GetNextSelected((WPARAM)-1);
-				if (sel != -1)
-				{
-					index = sel;
-				}
-			}
-
-			wchar_t archive_override[FILENAME_SIZE] = { 0 };
-			ProcessFilePlayback(GetPlaylistItemFile(index, archive_override),
-													false, archive_override);
-			RefreshInnerWindow();
-		}
-		else if ((lParam == IPC_PLITEM_SELECTED_CHANGED) && clickTrack)
-		{
-			// art change to show the selected item in the playlist editor
-			// whilst also accounting for the selection changing & it then
-			// needing to be set back to the current item if there's none
-			wchar_t archive_override[FILENAME_SIZE] = { 0 };
-			ProcessFilePlayback(((wParam > 0) ? GetPlaylistItemFile((int)(wParam - 1), archive_override) :
-											    GetPlayingFilename(0, NULL)), false, archive_override);
-			RefreshInnerWindow();
 		}
 		else if (lParam == IPC_GET_EMBEDIF_NEW_HWND)
 		{
@@ -2276,9 +2293,16 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 			{
 				// allow new threads to be spawned
 				// after we've cleaned up existing
+				// skipping the timer for now as a
+				// brief appearance of the missing
+				// waveform can show vs processed.
 				kill_threads = 0;
-				ProcessFilePlayback(((wParam == 1) ? szFilename :
-					   GetPlayingFilename(0, NULL)), true, NULL);
+
+				if (!ProcessFilePlayback(((wParam == 1) ? szFilename :
+					GetPlayingFilename(0, NULL)), true, NULL, true))
+				{
+					SetTimer(hWndInner, 8889, 50, ProcessFileTimerProc);
+				}
 			}
 		}
 		/*else if (lParam == IPC_WACUP_HAS_LOADED)
