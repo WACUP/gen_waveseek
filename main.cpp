@@ -2395,8 +2395,6 @@ void PluginQuit()
 {
 	kill_threads = 2;
 
-	ProcessStop(true);
-
 	ClearProcessingHandles();
 
 	if (no_uninstall)
