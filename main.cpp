@@ -1197,8 +1197,7 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 	{
 		const int lengthInMS = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() : GetFileLengthMilliseconds());
 		POINT pt = { 0 };
-		GetCursorPos(&pt);
-		ScreenToClient(hWndInner, &pt);
+		GetClientCursorPos(hWndInner, &pt);
 		ti.lpszText = GetTooltipText(hWndInner, pt.x, lengthInMS);
 		PostMessage(hWndToolTip, TTM_SETTOOLINFO, 0, (LPARAM)&ti);
 	}
