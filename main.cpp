@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.21.2"
+#define PLUGIN_VERSION "3.21.5"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -283,6 +283,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	CalcThreadParams *item = (CalcThreadParams *)lp;
 	ifc_audiostream* decoder = NULL;
 	unsigned int nFramePerWindow = 0;
+	void* token = NULL;
 	bool reentrant = false;
 	wchar_t buf[16] = { 0 };
 	extendedFileInfoStructW efis = { item->filename, (audioOnly ? L"type" :
@@ -292,9 +293,10 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	// as processing video can cause some problems...
 	if (!kill_threads && audioOnly)
 	{
-		if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL, &reentrant,
-								    &item->db_error) && !!WStr2I(buf))
+		if (GetFileInfoHookable((WPARAM)&efis, TRUE, &token, &reentrant,
+									  &item->db_error) && !!WStr2I(buf))
 		{
+			plugin.metadata->FreeExtendedFileInfoToken(&token);
 			goto abort;
 		}
 
@@ -312,8 +314,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	int lengthMS = -1;
 	if (!kill_threads)
 	{
-		if (GetFileInfoHookable((WPARAM)&efis, TRUE, NULL, &reentrant,
-										   &item->db_error) && buf[0])
+		if (GetFileInfoHookable((WPARAM)&efis, TRUE, &token, &reentrant,
+										     &item->db_error) && buf[0])
 		{
 			lengthMS = WStr2I(buf);
 		}
@@ -326,6 +328,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 			}
 		}
 	}
+
+	plugin.metadata->FreeExtendedFileInfoToken(&token);
 
 	// without a valid length we've not got much
 	// chance of reliably processing this file
@@ -1184,6 +1188,8 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 					if (dw > 0)
 					{
 						bIsLoaded = true;
+
+						RefreshInnerWindow();
 						return true;
 					}
 				}
@@ -1265,12 +1271,12 @@ void ProcessSkinChange(BOOL skip_refresh = FALSE)
 		{
 			// otherwise look for (if loaded) anything within the
 			// modern skin configuration for it's override colours
-			clrBackground = GetFFSkinColour(L"plugin.waveseeker.background", clrBackground);
-			clrCuePoint = GetFFSkinColour(L"plugin.waveseeker.cue_point", clrCuePoint);
-			clrGeneratingText = GetFFSkinColour(L"plugin.waveseeker.status_text", clrGeneratingText);
-			clrWaveform = GetFFSkinColour(L"plugin.waveseeker.wave_normal", clrWaveform);
-			clrWaveformPlayed = GetFFSkinColour(L"plugin.waveseeker.wave_playing", clrWaveformPlayed);
-			clrWaveformFailed = GetFFSkinColour(L"plugin.waveseeker.wave_failed", clrWaveformFailed);
+			clrBackground = GetFFSkinColour(L"plugin.waveseeker.background", clrBackground, true);
+			clrCuePoint = GetFFSkinColour(L"plugin.waveseeker.cue_point", clrCuePoint, false);
+			clrGeneratingText = GetFFSkinColour(L"plugin.waveseeker.status_text", clrGeneratingText, false);
+			clrWaveform = GetFFSkinColour(L"plugin.waveseeker.wave_normal", clrWaveform, false);
+			clrWaveformPlayed = GetFFSkinColour(L"plugin.waveseeker.wave_playing", clrWaveformPlayed, false);
+			clrWaveformFailed = GetFFSkinColour(L"plugin.waveseeker.wave_failed", clrWaveformFailed, false);
 		}
 #endif
 	}
@@ -1301,10 +1307,8 @@ void ClearCacheFolder(const bool mode)
 	}
 }
 
-void CALLBACK ProcessFileTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
+LPCWSTR GetSelectedFilePath(LPWSTR filepath)
 {
-	KillTimer(hwnd, idEvent);
-
 	// update as needed to match the new setting
 	// with fallback to the current playing if
 	// there's no selection or it's been disabled
@@ -1318,9 +1322,16 @@ void CALLBACK ProcessFileTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD
 		}
 	}
 
+	return GetPlaylistItemFile(index, filepath);
+}
+
+void CALLBACK ProcessFileTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
+{
+	KillTimer(hwnd, idEvent);
+
 	wchar_t archive_override[FILENAME_SIZE] = { 0 };
-	ProcessFilePlayback(GetPlaylistItemFile(index, archive_override), false,
-												   archive_override, false);
+	ProcessFilePlayback(GetSelectedFilePath(archive_override), false,
+											archive_override, false);
 }
 
 bool ProcessMenuResult(const UINT command, HWND parent)
@@ -2297,10 +2308,15 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				// waveform can show vs processed.
 				kill_threads = 0;
 
+				wchar_t filepath[FILENAME_SIZE] = { 0 };
 				if (!ProcessFilePlayback(((wParam == 1) ? szFilename :
-					GetPlayingFilename(0, NULL)), true, NULL, true))
+					GetSelectedFilePath(filepath)), true, NULL, true))
 				{
 					SetTimer(hWndInner, 8889, 50, ProcessFileTimerProc);
+				}
+				else
+				{
+					RefreshInnerWindow();
 				}
 			}
 		}
