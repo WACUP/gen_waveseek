@@ -301,8 +301,8 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		}
 
 		efis.metadata = L"length";
-		buf[0] = 0;
 	}
+	buf[0] = 0;
 
 	// try to get the appropriate value which will
 	// usually be pulled in from the local library
