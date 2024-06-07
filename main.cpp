@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.21.5"
+#define PLUGIN_VERSION "3.21.6"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -2218,7 +2218,9 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 
 				// finally we add menu items to the main right-click menu and the views menu
 				// with Modern skins which support showing the views menu for accessing windows
-				AddEmbeddedWindowToMenus(WINAMP_WAVEFORM_SEEK_MENUID, WASABI_API_LNGSTRINGW(IDS_WAVEFORM_SEEKER_MENU), visible, -1);
+				wchar_t lang_string[32] = { 0 };
+				AddEmbeddedWindowToMenus(WINAMP_WAVEFORM_SEEK_MENUID, WASABI_API_LNGSTRINGW_BUF(IDS_WAVEFORM_SEEKER_MENU,
+																	  lang_string, ARRAYSIZE(lang_string)), visible, -1);
 
 				// now we will attempt to create an embedded window which adds its own main menu entry
 				// and related keyboard accelerator (like how the media library window is integrated)
@@ -2226,7 +2228,8 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				hWndWaveseek = CreateEmbeddedWindow(&embed, embed_guid);
 
 				// once the window is created we can then specify the window title and menu integration
-				SetWindowText(hWndWaveseek, WASABI_API_LNGSTRINGW(IDS_WAVEFORM_SEEKER));
+				SetWindowText(hWndWaveseek, WASABI_API_LNGSTRINGW_BUF(IDS_WAVEFORM_SEEKER,
+													lang_string, ARRAYSIZE(lang_string)));
 
 #ifndef _WIN64
 				// there's no need to be subclassing the
