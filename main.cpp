@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.21.6"
+#define PLUGIN_VERSION "3.21.7"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -1048,7 +1048,7 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 				archive_override[FILENAME_SIZE] = { 0 };
 		const bool archive = (szArchiveFn && *szArchiveFn);
 		ProcessPath((archive ? szArchiveFn : szFn), usable_path,
-								 ARRAYSIZE(usable_path), FALSE);
+						   ARRAYSIZE(usable_path), FALSE, NULL);
 
 		// we can sometimes see this message before the following
 		// delay load message so we need to ensure that the paths
@@ -1108,12 +1108,15 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 			// file will be made with the better name.
 			CombinePath(szWaveCacheFile, GetFilePaths(),
 						FindPathFileName(usable_path));
-			StringCchCat(szWaveCacheFile, ARRAYSIZE(szWaveCacheFile), L".cache");
+
+			size_t remaining = ARRAYSIZE(szWaveCacheFile);
+			StringCchCatEx(szWaveCacheFile, ARRAYSIZE(szWaveCacheFile),
+									L".cache", NULL, &remaining, NULL);
 
 			if (!FileExists(szWaveCacheFile))
 			{
 				wchar_t cacheFile[61] = { 0 };
-				if (GetFilenameHash(usable_path, cacheFile))
+				if (GetFilenameHash(usable_path, (ARRAYSIZE(szWaveCacheFile) - remaining), cacheFile))
 				{
 					StringCchCat(cacheFile, ARRAYSIZE(cacheFile), L".cache");
 					CombinePath(szWaveCacheFile, GetFilePaths(), cacheFile);
@@ -1385,7 +1388,10 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 				wchar_t filename[MAX_PATH] = { 0 };
 				CombinePath(filename, GetFilePaths(),
 							FindPathFileName(szFilename));
-				StringCchCat(filename, ARRAYSIZE(filename), L".cache");
+
+				size_t remaining = ARRAYSIZE(filename);
+				StringCchCatEx(filename, ARRAYSIZE(filename), L".cache", NULL, &remaining, NULL);
+
 				if (FileExists(filename))
 				{
 					DeleteFile(filename);
@@ -1393,7 +1399,7 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 				else
 				{
 					wchar_t cacheFile[61] = { 0 };
-					if (GetFilenameHash(szFilename, cacheFile))
+					if (GetFilenameHash(szFilename, (ARRAYSIZE(filename) - remaining), cacheFile))
 					{
 						StringCchCat(cacheFile, ARRAYSIZE(cacheFile), L".cache");
 						if (CheckForPath(filename, GetFilePaths(), cacheFile))
