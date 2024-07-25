@@ -12,7 +12,8 @@ BOOL visible = FALSE, old_visible = FALSE, self_update = FALSE;
 RECT initial[2] = { 0 };
 extern LRESULT delay_load;
 
-HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID embedWindowGUID)
+HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID
+						  embedWindowGUID, LPCWSTR embedWindowTitle)
 {
 	// this sets a GUID which can be used in a modern skin / other parts of Winamp to
 	// indentify the embedded window frame such as allowing it to activated in a skin
@@ -61,7 +62,7 @@ HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID embedWindowG
 	embedWindow->flags |= EMBED_FLAGS_NOWINDOWMENU;
 
 	// now we have set up the embedWindowState structure, we pass it to Winamp to create
-	return plugin.createembed(embedWindow);
+	return plugin.createembed(embedWindow, embedWindowTitle);
 }
 
 void DestroyEmbeddedWindow(embedWindowState* embedWindow)

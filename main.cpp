@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.21.7"
+#define PLUGIN_VERSION "3.23"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -129,6 +129,7 @@ wchar_t
 In_Module * pModule = NULL;
 #endif
 LRESULT delay_load = -1;
+size_t szFilenameLen = 0;
 int nLengthInMS = 0, no_uninstall = 1, bUnsupported = 0;
 bool bIsCurrent = false, bIsProcessing = false, bIsLoaded = false;
 DWORD delay_ipc = (DWORD)-1;
@@ -888,57 +889,70 @@ CUETRACK pCueTracks[256] = { 0 };
 
 void LoadCUE(wchar_t * szFn)
 {
-	FILE * f = _wfopen(szFn, L"rt");
-	if (!f)
+	if (showCuePoints)
 	{
-		return;
+		wchar_t szCue[MAX_PATH] = { 0 };
+		(void)StringCchCopy(szCue, ARRAYSIZE(szCue), szFn);
+		RenameExtension(szCue, L".cue");
+
+		nCueTracks = 0;
+
+		// TODO this is causing things to hang with broken network shares
+		//		since it's getting a valid response due to how things now
+		//		react to network / unc paths to avoid hangs vs checking &
+		//		that will incorrectly allow the action to be processed...
+		FILE* f = (FilePathExists(szCue) ? _wfopen(szFn, L"rt") : NULL);
+		if (!f)
+		{
+			return;
+		}
+
+		int nCurrentTrack = 0;
+		wchar_t strs[256] = { 0 };
+		while (fgetws(strs, 256, f))
+		{
+			wchar_t* str = strs;
+			while ((*str == L' ') || (*str == L'\r') || (*str == L'\n'))
+			{
+				++str;
+			}
+
+			if (wcsstr(str, L"TRACK") == str)
+			{
+				(void)swscanf(str, L"TRACK %d AUDIO", &nCurrentTrack);
+				nCurrentTrack = min(nCurrentTrack, 255);
+				nCueTracks = max(nCueTracks, nCurrentTrack);
+				if (nCurrentTrack > 1)
+				{
+					pCueTracks[nCurrentTrack - 1].szPerformer[0] = 0;
+					pCueTracks[nCurrentTrack - 1].szTitle[0] = 0;
+				}
+			}
+
+			if (nCurrentTrack > 0)
+			{
+				CUETRACK& track = pCueTracks[nCurrentTrack - 1];
+				if (wcsstr(str, L"PERFORMER") == str)
+				{
+					(void)swscanf(str, L"PERFORMER \"%[^\"]\"", track.szPerformer);
+				}
+
+				if (wcsstr(str, L"TITLE") == str)
+				{
+					(void)swscanf(str, L"TITLE \"%[^\"]\"", track.szTitle);
+				}
+
+				if (wcsstr(str, L"INDEX") == str)
+				{
+					int m = 0, s = 0, _f = 0;
+					(void)swscanf(str, L"INDEX %*d %d:%d:%d", &m, &s, &_f);
+					track.nMillisec = m * 60 * 1000 + s * 1000 + (_f * 1000) / 75;
+				}
+			}
+		}
+
+		fclose(f);
 	}
-
-	nCueTracks = 0;
-	int nCurrentTrack = 0;
-	wchar_t strs[256] = { 0 };
-	while (fgetws(strs, 256, f))
-	{
-		wchar_t *str = strs;
-		while ((*str == L' ') || (*str == L'\r') || (*str == L'\n'))
-		{
-			++str;
-		}
-
-		if (wcsstr(str, L"TRACK") == str)
-		{
-			(void)swscanf(str, L"TRACK %d AUDIO", &nCurrentTrack);
-			nCurrentTrack = min(nCurrentTrack, 255);
-			nCueTracks = max(nCueTracks, nCurrentTrack);
-			if (nCurrentTrack > 1)
-			{
-				pCueTracks[nCurrentTrack - 1].szPerformer[0] = 0;
-				pCueTracks[nCurrentTrack - 1].szTitle[0] = 0;
-			}
-		}
-
-		if (nCurrentTrack > 0)
-		{
-			CUETRACK & track = pCueTracks[ nCurrentTrack - 1];
-			if (wcsstr(str, L"PERFORMER") == str)
-			{
-				(void)swscanf(str, L"PERFORMER \"%[^\"]\"", track.szPerformer);
-			}
-
-			if (wcsstr(str, L"TITLE") == str)
-			{
-				(void)swscanf(str, L"TITLE \"%[^\"]\"", track.szTitle);
-			}
-
-			if (wcsstr(str, L"INDEX") == str)
-			{
-				int m = 0, s = 0, _f = 0;
-				(void)swscanf(str, L"INDEX %*d %d:%d:%d", &m, &s, &_f);
-				track.nMillisec = m * 60 * 1000 + s * 1000 + (_f * 1000) / 75;
-			}
-		}
-	}
-	fclose(f);
 }
 
 LPWSTR GetTooltipText(HWND hWnd, int pos, int lengthInMS)
@@ -1084,7 +1098,10 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 			bIsCurrent = true;
 		}
 
-		(void)StringCchCopy(szFilename, ARRAYSIZE(szFilename), usable_path);
+		size_t filename_remaining = ARRAYSIZE(szFilename);
+		(void)StringCchCopyEx(szFilename, ARRAYSIZE(szFilename),
+				  usable_path, NULL, &filename_remaining, NULL);
+		szFilenameLen = (ARRAYSIZE(szFilename) - filename_remaining);
 
 		nCueTracks = 0;
 
@@ -1093,21 +1110,16 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 			FilePathExists(usable_path) && AllowedFile(usable_path)) ||
 			(IsZipEntry(usable_path) && AllowedFile(usable_path)))
 		{
-			wchar_t szCue[MAX_PATH] = { 0 };
-			(void)StringCchCopy(szCue, ARRAYSIZE(szCue), usable_path);
-			RenameExtension(szCue, L".cue");
-
-			if (FilePathExists(szCue))
-			{
-				LoadCUE(szCue);
-			}
+			const bool zip_entry = (bIsCurrent && (IsZipEntry(usable_path) ||
+											  IsZipEntry(archive_override)));
+			LoadCUE(usable_path);
 
 #ifdef WACUP_BUILD
 			// for a smoother upgrade we'll still look
 			// for the original cache file but a newer
 			// file will be made with the better name.
-			CombinePath(szWaveCacheFile, GetFilePaths(),
-						FindPathFileName(usable_path));
+			CombinePath(szWaveCacheFile, GetFilePaths(), FindPathFileName((zip_entry &&
+							   archive_override[0] ? archive_override : usable_path)));
 
 			size_t remaining = ARRAYSIZE(szWaveCacheFile);
 			StringCchCatEx(szWaveCacheFile, ARRAYSIZE(szWaveCacheFile),
@@ -1116,7 +1128,9 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 			if (!FileExists(szWaveCacheFile))
 			{
 				wchar_t cacheFile[61] = { 0 };
-				if (GetFilenameHash(usable_path, (ARRAYSIZE(szWaveCacheFile) - remaining), cacheFile))
+				if (GetFilenameHash((zip_entry && archive_override[0] ? archive_override :
+									usable_path), (zip_entry && archive_override[0] ?
+									wcslen(archive_override ): szFilenameLen), cacheFile))
 				{
 					StringCchCat(cacheFile, ARRAYSIZE(cacheFile), L".cache");
 					CombinePath(szWaveCacheFile, GetFilePaths(), cacheFile);
@@ -1144,7 +1158,8 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 					// found it so no need to re-add
 					// as that's just going to cause
 					// more processing / duplication
-					if (wcsistr(usable_path, (*itr).first.c_str()))
+					if (wcsistr((zip_entry && archive && archive_override[0] ?
+						archive_override : usable_path), (*itr).first.c_str()))
 					{
 						LeaveCriticalSection(&processing_cs);
 
@@ -1332,9 +1347,30 @@ void CALLBACK ProcessFileTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD
 {
 	KillTimer(hwnd, idEvent);
 
-	wchar_t archive_override[FILENAME_SIZE] = { 0 };
-	ProcessFilePlayback(GetSelectedFilePath(archive_override), false,
-											archive_override, false);
+	PostMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)2, delay_load);
+}
+
+void CALLBACK CreateTooltipTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
+{
+	KillTimer(hwnd, idEvent);
+
+	if (!IsWindow(hWndToolTip))
+	{
+		hWndToolTip = CreateWindowEx(WS_EX_NOPARENTNOTIFY | WS_EX_TOPMOST,
+									 TOOLTIPS_CLASS, NULL, TTS_NOPREFIX |
+									 TTS_ALWAYSTIP, 0, 0, 0, 0, hwnd,
+									 NULL, plugin.hDllInstance, NULL);
+	}
+
+	if (IsWindow(hWndToolTip))
+	{
+		ti.cbSize = sizeof(TOOLINFO);
+		ti.uFlags = TTF_TRACK | TTF_TRANSPARENT |
+					TTF_ABSOLUTE | TTF_CENTERTIP;
+		ti.hinst = plugin.hDllInstance;
+		PostMessage(hWndToolTip, TTM_ADDTOOL, NULL, (LPARAM)&ti);
+		SkinToolTip(hWndToolTip);
+	}
 }
 
 bool ProcessMenuResult(const UINT command, HWND parent)
@@ -1398,13 +1434,22 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 				}
 				else
 				{
-					wchar_t cacheFile[61] = { 0 };
-					if (GetFilenameHash(szFilename, (ARRAYSIZE(filename) - remaining), cacheFile))
+					if (FileExists(szWaveCacheFile))
 					{
-						StringCchCat(cacheFile, ARRAYSIZE(cacheFile), L".cache");
-						if (CheckForPath(filename, GetFilePaths(), cacheFile))
+						DeleteFile(szWaveCacheFile);
+					}
+					else
+					{
+						// thisis the final attempt to get a match which shouldn't
+						// typically ever end up being called especially for zips!
+						wchar_t cacheFile[61] = { 0 };
+						if (GetFilenameHash(szFilename, szFilenameLen, cacheFile))
 						{
-							DeleteFile(filename);
+							StringCchCat(cacheFile, ARRAYSIZE(cacheFile), L".cache");
+							if (CheckForPath(filename, GetFilePaths(), cacheFile))
+							{
+								DeleteFile(filename);
+							}
 						}
 					}
 				}
@@ -1465,6 +1510,11 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 			showCuePoints = (!showCuePoints);
 			SaveNativeIniString(WINAMP_INI, L"Waveseek", L"showCuePoints",
 										   (showCuePoints ? L"1" : NULL));
+
+			// update as needed to match the new setting
+			// with fallback to the current playing if
+			// there's no selection or it's been disabled
+			SetTimer(hWndInner, 8889, 50, ProcessFileTimerProc);
 			break;
 		}
 		case ID_SUBMENU_HIDEWAVEFORMTOOLTIP:
@@ -1472,6 +1522,11 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 			hideTooltip = (!hideTooltip);
 			SaveNativeIniString(WINAMP_INI, L"Waveseek", L"hideTooltip",
 										   (hideTooltip ? L"1" : NULL));
+
+			if (!hideTooltip && IsWindow(hWndInner))
+			{
+				SetTimer(hWndInner, 8888, 333, CreateTooltipTimerProc);
+			}
 			break;
 		}
 		case ID_SUBMENU_RENDERWAVEFORMFORAUDIO:
@@ -1585,29 +1640,6 @@ LRESULT CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 }
 #endif
 
-void CALLBACK CreateTooltipTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
-{
-	KillTimer(hwnd, idEvent);
-
-	if (!IsWindow(hWndToolTip))
-	{
-		hWndToolTip = CreateWindowEx(WS_EX_NOPARENTNOTIFY | WS_EX_TOPMOST,
-									 TOOLTIPS_CLASS, NULL, TTS_NOPREFIX |
-									 TTS_ALWAYSTIP, 0, 0, 0, 0, hwnd,
-									 NULL, plugin.hDllInstance, NULL);
-	}
-
-	if (IsWindow(hWndToolTip))
-	{
-		ti.cbSize = sizeof(TOOLINFO);
-		ti.uFlags = TTF_TRACK | TTF_TRANSPARENT |
-					TTF_ABSOLUTE | TTF_CENTERTIP;
-		ti.hinst = plugin.hDllInstance;
-		PostMessage(hWndToolTip, TTM_ADDTOOL, NULL, (LPARAM)&ti);
-		SkinToolTip(hWndToolTip);
-	}
-}
-
 LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	// if you need to do other message handling then you can just place this first and
@@ -1649,7 +1681,10 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		}
 		case WM_CREATE:
 		{
-			SetTimer(hWnd, 8888, 333, CreateTooltipTimerProc);
+			if (!hideTooltip)
+			{
+				SetTimer(hWnd, 8888, 333, CreateTooltipTimerProc);
+			}
 
 			// if we've been created but processing is already
 			// underway then we need to get things going on to
@@ -2231,11 +2266,8 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				// now we will attempt to create an embedded window which adds its own main menu entry
 				// and related keyboard accelerator (like how the media library window is integrated)
 				embed.flags |= EMBED_FLAGS_SCALEABLE_WND;	// double-size support!
-				hWndWaveseek = CreateEmbeddedWindow(&embed, embed_guid);
-
-				// once the window is created we can then specify the window title and menu integration
-				SetWindowText(hWndWaveseek, WASABI_API_LNGSTRINGW_BUF(IDS_WAVEFORM_SEEKER,
-													lang_string, ARRAYSIZE(lang_string)));
+				hWndWaveseek = CreateEmbeddedWindow(&embed, embed_guid, WASABI_API_LNGSTRINGW_BUF(IDS_WAVEFORM_SEEKER,
+																				lang_string, ARRAYSIZE(lang_string)));
 
 #ifndef _WIN64
 				// there's no need to be subclassing the
@@ -2308,20 +2340,33 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 					}
 				}*/
 			}
-			else
+			else if (wParam <= 2)
 			{
+				const bool check_only = (wParam == 1);
+
 				// allow new threads to be spawned
 				// after we've cleaned up existing
 				// skipping the timer for now as a
 				// brief appearance of the missing
 				// waveform can show vs processed.
-				kill_threads = 0;
+				if (check_only)
+				{
+					kill_threads = 0;
+				}
 
 				wchar_t filepath[FILENAME_SIZE] = { 0 };
 				if (!ProcessFilePlayback(((wParam == 1) ? szFilename :
-					GetSelectedFilePath(filepath)), true, NULL, true))
+										 GetSelectedFilePath(filepath)),
+										 check_only, NULL, check_only))
 				{
-					SetTimer(hWndInner, 8889, 50, ProcessFileTimerProc);
+					if (check_only)
+					{
+						SetTimer(hWndInner, 8889, 50, ProcessFileTimerProc);
+					}
+					else
+					{
+						RefreshInnerWindow();
+					}
 				}
 				else
 				{

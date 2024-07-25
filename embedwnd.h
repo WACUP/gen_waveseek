@@ -15,7 +15,8 @@
 #define MINIMISED_FLAG L"WFSMinMode"
 
 // these functions deal with creating the embedded window and relevant menus, etc
-HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID embedWindowGUID);
+HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID
+						  embedWindowGUID, LPCWSTR embedWindowTitle);
 void DestroyEmbeddedWindow(embedWindowState* embedWindow);
 /*void AddEmbeddedWindowToMenus(const BOOL add, const UINT menuId, LPCWSTR menuString, const BOOL setVisible);
 void UpdateEmbeddedWindowsMenu(const UINT menuId);
