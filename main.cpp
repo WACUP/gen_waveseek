@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.23"
+#define PLUGIN_VERSION "3.24"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -1108,7 +1108,8 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 		// make sure that it's valid and something we can process
 		if ((!IsPathURL(usable_path) && !IsCDEntry(usable_path) &&
 			FilePathExists(usable_path) && AllowedFile(usable_path)) ||
-			(IsZipEntry(usable_path) && AllowedFile(usable_path)))
+			IsYTUrl(usable_path) || (IsZipEntry(usable_path) &&
+			AllowedFile(usable_path)))
 		{
 			const bool zip_entry = (bIsCurrent && (IsZipEntry(usable_path) ||
 											  IsZipEntry(archive_override)));
@@ -1418,79 +1419,76 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 		[[fallthrough]];
 		case ID_SUBMENU_RERENDER:
 		{
-			if (!IsPathURL(szFilename) || IsZipEntry(szFilename))
+			// support the older & newer cache filenames
+			wchar_t filename[MAX_PATH] = { 0 };
+			CombinePath(filename, GetFilePaths(),
+						FindPathFileName(szFilename));
+
+			size_t remaining = ARRAYSIZE(filename);
+			StringCchCatEx(filename, ARRAYSIZE(filename), L".cache", NULL, &remaining, NULL);
+
+			if (FileExists(filename))
 			{
-				// support the older & newer cache filenames
-				wchar_t filename[MAX_PATH] = { 0 };
-				CombinePath(filename, GetFilePaths(),
-							FindPathFileName(szFilename));
-
-				size_t remaining = ARRAYSIZE(filename);
-				StringCchCatEx(filename, ARRAYSIZE(filename), L".cache", NULL, &remaining, NULL);
-
-				if (FileExists(filename))
+				DeleteFile(filename);
+			}
+			else
+			{
+				if (FileExists(szWaveCacheFile))
 				{
-					DeleteFile(filename);
+					DeleteFile(szWaveCacheFile);
 				}
 				else
 				{
-					if (FileExists(szWaveCacheFile))
+					// thisis the final attempt to get a match which shouldn't
+					// typically ever end up being called especially for zips!
+					wchar_t cacheFile[61] = { 0 };
+					if (GetFilenameHash(szFilename, szFilenameLen, cacheFile))
 					{
-						DeleteFile(szWaveCacheFile);
-					}
-					else
-					{
-						// thisis the final attempt to get a match which shouldn't
-						// typically ever end up being called especially for zips!
-						wchar_t cacheFile[61] = { 0 };
-						if (GetFilenameHash(szFilename, szFilenameLen, cacheFile))
+						StringCchCat(cacheFile, ARRAYSIZE(cacheFile), L".cache");
+						if (CheckForPath(filename, GetFilePaths(), cacheFile))
 						{
-							StringCchCat(cacheFile, ARRAYSIZE(cacheFile), L".cache");
-							if (CheckForPath(filename, GetFilePaths(), cacheFile))
-							{
-								DeleteFile(filename);
-							}
+							DeleteFile(filename);
 						}
 					}
 				}
-
-				if (IsWindow(hWndInner))
-				{
-					timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
-				}
-				bIsProcessing = false;
-
-				ProcessStop();
-
-				EnterCriticalSection(&processing_cs);
-
-				std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
-				while (itr != processing_list.end())
-				{
-					// found it so no need to re-add
-					// as that's just going to cause
-					// more processing / duplication
-					if (wcsistr(szFilename, (*itr).first.c_str()))
-					{
-						abort_processing_thread((*itr).second);
-
-						processing_list.erase(itr);
-						break;
-					}
-
-					++itr;
-				}
-
-				processing_list.clear();
-
-				LeaveCriticalSection(&processing_cs);
-
-				// wait a moment so if it was already
-				// processing then that can clean-up
-				// before we attempt a new processing
-				Sleep(10);
-				PostMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)1, delay_load);
 			}
+
+			if (IsWindow(hWndInner))
+			{
+				timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_FREQ, NULL);
+			}
+			bIsProcessing = false;
+
+			ProcessStop();
+
+			EnterCriticalSection(&processing_cs);
+
+			std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
+			while (itr != processing_list.end())
+			{
+				// found it so no need to re-add
+				// as that's just going to cause
+				// more processing / duplication
+				if (wcsistr(szFilename, (*itr).first.c_str()))
+				{
+					abort_processing_thread((*itr).second);
+
+					processing_list.erase(itr);
+					break;
+				}
+
+				++itr;
+			}
+
+			processing_list.clear();
+
+			LeaveCriticalSection(&processing_cs);
+
+			// wait a moment so if it was already
+			// processing then that can clean-up
+			// before we attempt a new processing
+			Sleep(10);
+			PostMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)1, delay_load);
 			break;
 		}
 		case ID_CONTEXTMENU_CLICKTRACK:
