@@ -1587,8 +1587,7 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 			wchar_t message[512] = { 0 };
 			StringCchPrintf(message, ARRAYSIZE(message), WASABI_API_LNGSTRINGW(IDS_ABOUT_STRING), TEXT(__DATE__));
 			//MessageBox(plugin.hwndParent, message, pluginTitleW, 0);
-			AboutMessageBox(plugin.hwndParent, message,
-							(LPWSTR)plugin.description);
+			AboutMessageBox(plugin.hwndParent, message, (LPWSTR)plugin.description);
 			break;
 		}
 		default:
