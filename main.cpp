@@ -901,7 +901,7 @@ void LoadCUE(wchar_t * szFn)
 		//		since it's getting a valid response due to how things now
 		//		react to network / unc paths to avoid hangs vs checking &
 		//		that will incorrectly allow the action to be processed...
-		FILE* f = (FilePathExists(szCue) ? _wfopen(szFn, L"rt") : NULL);
+		FILE* f = (FilePathExists(szCue, NULL) ? _wfopen(szFn, L"rt") : NULL);
 		if (!f)
 		{
 			return;
@@ -1107,7 +1107,7 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 
 		// make sure that it's valid and something we can process
 		if ((!IsPathURL(usable_path) && !IsCDEntry(usable_path) &&
-			FilePathExists(usable_path) && AllowedFile(usable_path)) ||
+			FilePathExists(usable_path, NULL) && AllowedFile(usable_path)) ||
 			IsYTUrl(usable_path) || (IsZipEntry(usable_path) &&
 			AllowedFile(usable_path)))
 		{
