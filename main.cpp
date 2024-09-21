@@ -901,7 +901,7 @@ void LoadCUE(wchar_t * szFn)
 		//		since it's getting a valid response due to how things now
 		//		react to network / unc paths to avoid hangs vs checking &
 		//		that will incorrectly allow the action to be processed...
-		FILE* f = (FilePathExists(szCue, NULL) ? _wfopen(szFn, L"rt") : NULL);
+		FILE* f = (FilePathExists(szCue, NULL) ? _wfopen(szCue, L"rt") : NULL);
 		if (!f)
 		{
 			return;
