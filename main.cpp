@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.24"
+#define PLUGIN_VERSION "3.24.1"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -909,7 +909,7 @@ void LoadCUE(wchar_t * szFn)
 
 		int nCurrentTrack = 0;
 		wchar_t strs[256] = { 0 };
-		while (fgetws(strs, 256, f))
+		while (fgetws(strs, ARRAYSIZE(strs), f))
 		{
 			wchar_t* str = strs;
 			while ((*str == L' ') || (*str == L'\r') || (*str == L'\n'))
