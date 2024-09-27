@@ -34,6 +34,7 @@
 #include <loader/loader/paths.h>
 #include <loader/loader/utils.h>
 #include <loader/loader/ini.h>
+#include <loader/loader/runtime_helper.h>
 #include <loader/hook/plugins.h>
 #include <nu/ServiceBuilder.h>
 #endif
@@ -2517,3 +2518,5 @@ extern "C" __declspec(dllexport) int winampUninstallPlugin(HINSTANCE hDllInst, H
 	// as we're doing too much in subclasses, etc we cannot allow for on-the-fly removal so need to do a normal reboot
 	return GEN_PLUGIN_UNINSTALL_REBOOT;
 }
+
+RUNTIME_LEN_HELPER_HANDLER
