@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.24.1"
+#define PLUGIN_VERSION "3.24.2"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -902,7 +902,7 @@ void LoadCUE(wchar_t * szFn)
 		//		since it's getting a valid response due to how things now
 		//		react to network / unc paths to avoid hangs vs checking &
 		//		that will incorrectly allow the action to be processed...
-		FILE* f = (FilePathExists(szCue, NULL) ? _wfopen(szCue, L"rt") : NULL);
+		FILE* f = (FilePathExists(szCue, NULL) ? _wfopen(szCue, L"rt,ccs=UTF-8") : NULL);
 		if (!f)
 		{
 			return;
