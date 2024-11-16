@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.24.2"
+#define PLUGIN_VERSION "3.25"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -69,6 +69,7 @@ WNDPROC oldPlaylistWndProc = NULL;
 bool paint_allowed = false;
 HDC cacheDC = NULL;
 HBITMAP cacheBMP = NULL;
+HRGN waveformRemainingRgn = NULL, waveformRgn = NULL;
 RECT lastWnd = { 0 };
 embedWindowState embed = { 0 };
 TOOLINFO ti = { 0 };
@@ -80,6 +81,7 @@ int clickTrack = 0, showCuePoints = 0,
 	kill_threads = 0, lowerpriority = 0, clearOnExit = 0;
 UINT WINAMP_WAVEFORM_SEEK_MENUID = 0xa1bb;
 UINT_PTR timer_id = 0;
+LPPOINT wave_remaining_points = NULL, wave_points = NULL;
 
 api_service *WASABI_API_SVC = NULL;
 api_decodefile2 *WASABI_API_DECODEFILE2 = NULL;
@@ -137,7 +139,8 @@ DWORD delay_ipc = (DWORD)-1;
 
 std::map<std::wstring, HANDLE> processing_list;
 CRITICAL_SECTION processing_cs = { 0 };
-
+HBRUSH waveformRemaining = NULL,
+	   waveformPlayed = NULL;
 COLORREF clrWaveform = RGB(0, 255, 0),
 		 clrBackground = RGB(0, 0, 0),
 		 clrCuePoint = RGB(117, 116, 139),
@@ -853,7 +856,7 @@ void ProcessStop(const bool is_closing)
 		{
 			if (IsWindow(hWndInner))
 			{
-				InvalidateRect(hWndInner, NULL, FALSE);
+				InvalidateRect(hWndInner, NULL, TRUE);
 			}
 			timer_id = 0;
 		}
@@ -882,6 +885,7 @@ typedef struct {
 	wchar_t szPerformer[256];
 	wchar_t szTitle[256];
 	unsigned int nMillisec;
+	int nDrawnPos;
 	bool bDrawn;
 } CUETRACK;
 
@@ -1046,7 +1050,7 @@ void RefreshInnerWindow(void)
 	// ensure the window update
 	if (!timer_id && IsWindow(hWndInner))
 	{
-		InvalidateRect(hWndInner, NULL, FALSE);
+		InvalidateRect(hWndInner, NULL, TRUE);
 	}
 }
 
@@ -1301,9 +1305,21 @@ void ProcessSkinChange(BOOL skip_refresh = FALSE)
 #endif
 	}
 
+	if (waveformRemaining != NULL)
+	{
+		DeleteObject(waveformRemaining);
+	}
+	waveformRemaining = CreateSolidBrush(clrWaveform);
+
+	if (waveformPlayed != NULL)
+	{
+		DeleteObject(waveformPlayed);
+	}
+	waveformPlayed = CreateSolidBrush(clrWaveformPlayed);
+
 	if (!skip_refresh)
 	{
-		InvalidateRect(hWndInner, NULL, FALSE);
+		InvalidateRect(hWndInner, NULL, TRUE);
 	}
 
 	MLSkinnedWnd_SkinChanged(hWndToolTip, FALSE, FALSE);
@@ -1698,17 +1714,13 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		{
 			if ((wParam == TIMER_ID) && IsWindowVisible(hWnd))
 			{
-				InvalidateRect(hWnd, NULL, FALSE);
+				InvalidateRect(hWnd, NULL, TRUE);
 			}
 			break;
 		}
 		case WM_NCPAINT:
 		{
 			return 0;
-		}
-		case WM_ERASEBKGND:
-		{
-			return 1;
 		}
 		case WM_SHOWWINDOW:
 		{
@@ -1718,10 +1730,9 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			paint_allowed = !!wParam;
 			break;
 		}
-		case WM_PAINT:
+		case WM_ERASEBKGND:
 		{
-			PAINTSTRUCT psPaint = { 0 };
-			const HDC hdc = ((kill_threads != 2) ? BeginPaint(hWnd, &psPaint) : NULL);
+			const HDC hdc = ((kill_threads != 2) ? (HDC)wParam : NULL);
 			if (hdc)
 			{
 				// we get the client area instead of
@@ -1759,6 +1770,20 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 					}
 
 					lastWnd = wnd;
+
+					const size_t wave_points_size = ((w + 4) * sizeof(POINT));
+
+					if (wave_remaining_points)
+					{
+						plugin.memmgr->sysFree(wave_remaining_points);
+					}
+					wave_remaining_points = (LPPOINT)plugin.memmgr->sysMalloc(wave_points_size);
+
+					if (wave_points)
+					{
+						plugin.memmgr->sysFree(wave_points);
+					}
+					wave_points = (LPPOINT)plugin.memmgr->sysMalloc(wave_points_size);
 				}
 
 				FillRectWithColour(cacheDC, &wnd, clrBackground, TRUE);
@@ -1770,14 +1795,18 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 					// correctly selected or the tooltip show up
 					--w;
 
+					const int height = (h / 2);
 					if ((bIsLoaded || bIsProcessing) && !bUnsupported)
 					{
 						SelectObject(cacheDC, GetStockObject(DC_PEN));
-						
-						SetDCPenColor(cacheDC, (nSongPos ? clrWaveformPlayed : clrWaveform));
+
+						int num_points = 1, num_remaining_points = 0;
+
+						wave_points[0].x = 0;
+						wave_points[0].y = height;
 
 						const bool has_cue = (showCuePoints && (nCueTracks > 0));
-						bool changed = false;
+						bool changed = false, different = false;
 						for (int i = 0; i < w; i++)
 						{
 							const int nBufLoc0 = ((i * SAMPLE_BUFFER_SIZE) / w),
@@ -1787,7 +1816,10 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 							if (nSongPos && (nBufLoc0 >= nBufPos) && !changed)
 							{
 								changed = true;
-								SetDCPenColor(cacheDC, clrWaveform);
+
+								wave_remaining_points[num_remaining_points].x = i;
+								wave_remaining_points[num_remaining_points].y = height;
+								++num_remaining_points;
 							}
 
 							unsigned short nSample = 0;
@@ -1797,13 +1829,39 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 							}
 
 							const unsigned short sh = static_cast<const unsigned short>((nSample * h) / 32767);
-							const int y = (h - sh) / 2;
+							const int y = ((h - sh) / 2);
 
-							if (sh)
+							const int old_y = wave_points[num_points].y,
+									  old_remaining_y = wave_remaining_points[num_remaining_points].y;
+							if (!changed)
+							{
+								wave_points[num_points].x = num_points;
+								wave_points[num_points].y = y;
+							}
+							else
+							{
+								wave_remaining_points[num_remaining_points].x = i;
+								wave_remaining_points[num_remaining_points].y = y;
+							}
+
+							if (!changed)
+							{
+								++num_points;
+							}
+							else
+							{
+								++num_remaining_points;
+							}
+
+							if (!different && ((!changed ? (y != old_y) : (y != old_remaining_y))))
+							{
+								different = true;
+							}
+							/*/if (sh)
 							{
 								MoveToEx(cacheDC, i, y, NULL);
-								LineTo(cacheDC, i, y + sh);
-							}
+								LineTo(cacheDC, i, (y + sh));
+							}/**/
 
 							if (has_cue)
 							{
@@ -1812,20 +1870,12 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 								{
 									for (int k = 0; k <= nCueTracks; k++)
 									{
-										if (!pCueTracks[k].bDrawn && (pCueTracks[k].nMillisec > 0) &&
+										if (!pCueTracks[k].bDrawn &&
+											(pCueTracks[k].nMillisec > 0) &&
 											(pCueTracks[k].nMillisec < ms))
 										{
 											pCueTracks[k].bDrawn = true;
-
-											const COLORREF old_colour =  SetDCPenColor(cacheDC, clrCuePoint);
-											MoveToEx(cacheDC, i - 1, 0, NULL);
-											LineTo(cacheDC, i - 1, h);
-											MoveToEx(cacheDC, i, 0, NULL);
-											LineTo(cacheDC, i, h);
-											/*MoveToEx(cacheDC, i + 1, 0, NULL);
-											LineTo(cacheDC, i + 1, h);*/
-											// need to reset or it'll go wonky
-											SetDCPenColor(cacheDC, old_colour);
+											pCueTracks[k].nDrawnPos = i;
 											break;
 										}
 									}
@@ -1833,13 +1883,84 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 							}
 						}
 
+						if (num_points)
+						{
+							wave_points[num_points].x = num_points;
+							wave_points[num_points].y = height;
+							wave_points[++num_points].x = 0;
+							wave_points[num_points].y = height;
+							wave_points[++num_points].x = 0;
+							wave_points[num_points].y = wave_points[0].y;
+						}
+						
+						if (num_remaining_points)
+						{
+							wave_remaining_points[num_remaining_points].x = (num_points + num_remaining_points + 1);
+							wave_remaining_points[num_remaining_points].y = height;
+							++num_remaining_points;
+							wave_remaining_points[num_remaining_points].x = wave_remaining_points[0].x;
+							wave_remaining_points[num_remaining_points].y = height;
+						}
+
+						if (different)
+						{
+							if (waveformRemainingRgn)
+							{
+								DeleteObject(waveformRemainingRgn);
+							}
+
+							waveformRemainingRgn = CreatePolygonRgn(wave_remaining_points, num_remaining_points, ALTERNATE);
+
+							if (waveformRgn)
+							{
+								DeleteObject(waveformRgn);
+							}
+
+							waveformRgn = CreatePolygonRgn(wave_points, num_points, ALTERNATE);
+						}
+
+						if (waveformRgn)
+						{
+							FillRgn(cacheDC, waveformRgn, (nSongPos ? waveformPlayed : waveformRemaining));/*/
+							SetDCPenColor(cacheDC, (nSongPos ? clrWaveformPlayed : clrWaveform));
+							PolylineTo(cacheDC, wave_points, num_points);/**/
+						}
+
+						if (waveformRemainingRgn)
+						{
+							FillRgn(cacheDC, waveformRemainingRgn, waveformRemaining);/*/
+							SetDCPenColor(cacheDC, clrWaveform);
+							PolylineTo(cacheDC, wave_remaining_points, num_remaining_points);/**/
+						}
+
 						if (has_cue)
 						{
-							for (int k = 0; k < nCueTracks; k++)
+							for (int k = 0; k <= nCueTracks; k++)
 							{
+								const int i = pCueTracks[k].nDrawnPos;
+
+								const COLORREF old_colour = SetDCPenColor(cacheDC, clrCuePoint);
+								MoveToEx(cacheDC, i - 1, 0, NULL);
+								LineTo(cacheDC, i - 1, height);
+								MoveToEx(cacheDC, i, 0, NULL);
+								LineTo(cacheDC, i, height);
+
+								// need to reset or it'll go wonky
+								SetDCPenColor(cacheDC, old_colour);
+
 								pCueTracks[k].bDrawn = false;
 							}
 						}
+
+						// and now restore so that we get drawn correctly
+						++w;
+
+						// copy the upper portion & then flip that to form the full image as that
+						// under profiling is quicker compared to doing loads of move/line calls
+						/*BitBlt(hdc, 0, 0, w, h, cacheDC, 0, 0, SRCCOPY);;
+						/*/
+						StretchBlt(hdc, 0, 0, w, height, cacheDC, 0, 0, w, height, SRCCOPY);
+						StretchBlt(hdc, 0, h, w, -height - 2, cacheDC, 0, 0, w, height, SRCCOPY);/**/
 					}
 					else
 					{
@@ -1859,7 +1980,6 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 						}
 						else
 						{
-							const int y = (h / 2);
 #ifdef USE_GDIPLUS
 							const bool plain = false;
 							if (plain)
@@ -1883,39 +2003,34 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 									// draw a base line in the middle of the window
 									SetDCPenColor(thisdc, (!nBufPos ? clrWaveformFailed : (!k ?
 															clrWaveform : clrWaveformPlayed)));
-									MoveToEx(thisdc, 0, y, NULL);
+									MoveToEx(thisdc, 0, height, NULL);
 
 									if (!k)
 									{
-										LineTo(thisdc, w, y);
-										MoveToEx(thisdc, 0, y, NULL);
+										LineTo(thisdc, w, height);
+										MoveToEx(thisdc, 0, height, NULL);
 									}
 
 									const bool playing = (k && (nBufPos > 0));
-									const HBRUSH br = (playing ? CreateSolidBrush(clrWaveformPlayed) : NULL);
 									for (int j = 0; j < ((w / 256) + 1); j++)
 									{
-#define num_point 4096
-										LPPOINT points = (LPPOINT)plugin.memmgr->sysMalloc(num_point * sizeof(POINT));
+#define num_points 4096
+										LPPOINT points = (LPPOINT)plugin.memmgr->sysMalloc(num_points * sizeof(POINT));
 										if (points)
 										{
-											for (int i = 0; i < num_point; i++)
+											for (int i = 0; i < num_points; i++)
 											{
-												points[i].x = (j * 256) + ((i * 256) / num_point);
-												points[i].y = (int)((h / 2.0f) * (1 - sin((4.0f * M_PI) * i / num_point)));
+												points[i].x = (j * 256) + ((i * 256) / num_points);
+												points[i].y = (int)((h / 2.0f) * (1 - sin((4.0f * M_PI) * i / num_points)));
 											}
 
-											PolylineTo(thisdc, points, num_point);
+											PolylineTo(thisdc, points, num_points);
 
 											// only fill in things when its needed
-											const HRGN rgn = (playing ? CreatePolygonRgn(points, num_point,
-																		  ALTERNATE/*/WINDING/**/) : NULL);
+											const HRGN rgn = (playing ? CreatePolygonRgn(points, num_points, ALTERNATE) : NULL);
 											if (rgn)
 											{
-												if (br)
-												{
-													FillRgn(thisdc, rgn, br);
-												}
+												FillRgn(thisdc, rgn, waveformPlayed);
 												DeleteObject(rgn);
 											}
 											plugin.memmgr->sysFree(points);
@@ -1926,10 +2041,8 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 									if (playing)
 									{
 										SetDCPenColor(thisdc, clrWaveform);
-										MoveToEx(thisdc, 0, y, NULL);
-										LineTo(thisdc, w, y);
-
-										DeleteObject(br);
+										MoveToEx(thisdc, 0, height, NULL);
+										LineTo(thisdc, w, height);
 									}
 								}
 
@@ -1978,17 +2091,15 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 							}
 #endif
 						}
+
+						// and now restore so that we get drawn correctly
+						++w;
+
+						BitBlt(hdc, 0, 0, w, h, cacheDC, 0, 0, SRCCOPY);
 					}
-
-					// and now restore so that we get drawn correctly
-					++w;
-
-					BitBlt(hdc, 0, 0, w, h, cacheDC, 0, 0, SRCCOPY);
 				}
-
-				EndPaint(hWnd, &psPaint);
 			}
-			return 0;
+			return 1;
 		}
 		// make sure we catch all appropriate skin changes
 		case WM_USER + 0x202:	// WM_DISPLAYCHANGE / IPC_SKIN_CHANGED_NEW
