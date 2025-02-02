@@ -276,7 +276,7 @@ void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT_PTR menuId, em
 	{
 		if (lParam == IPC_SKIN_CHANGED_NEW)
 		{
-			RefreshInnerWindow(GetWindow(embedWnd, GW_CHILD));
+			RefreshInnerWindow(embedWnd, true);
 		}
 		else if ((lParam == IPC_CB_ONSHOWWND) || (lParam == IPC_CB_ONHIDEWND))
 		{

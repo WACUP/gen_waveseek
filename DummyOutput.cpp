@@ -46,7 +46,7 @@ void AddSample(unsigned int nSample)
 
 	if (((nCurrentSampleCount / nNumChannels) == nFramePerWindow) && (nBufferPointer < SAMPLE_BUFFER_SIZE))
 	{
-		pSampleBuffer[nBufferPointer++] = nCurrentAmplitude;
+		pSampleBuffer[nBufferPointer++] = (unsigned short)nCurrentAmplitude;
 		nCurrentSampleCount = 0;
 		nCurrentAmplitude = 0;
 	}

@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.25"
+#define PLUGIN_VERSION "3.25.1"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -221,7 +221,7 @@ unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer, const unsig
 		if (((nSampleCount / nNumChannels) == nFramePerWindow) &&
 			(nBufferPointer < SAMPLE_BUFFER_SIZE))
 		{
-			pBuffer[nBufferPointer++] = nAmplitude;
+			pBuffer[nBufferPointer++] = (unsigned short)nAmplitude;
 			nSampleCount = 0;
 			nAmplitude = 0;
 
@@ -288,6 +288,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	CalcThreadParams *item = (CalcThreadParams *)lp;
 	ifc_audiostream* decoder = NULL;
 	unsigned int nFramePerWindow = 0;
+	int lengthMS = -1;
 	void* token = NULL;
 	bool reentrant = false;
 	wchar_t buf[16] = { 0 };
@@ -316,7 +317,6 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	// so it'll if needed fallback to the playlist
 	// information that's been stored for the item
 	// as something to work with to check it's ok.
-	int lengthMS = -1;
 	if (!kill_threads)
 	{
 		if (GetFileInfoHookable((WPARAM)&efis, TRUE, &token, &reentrant,
@@ -1387,7 +1387,8 @@ void CALLBACK CreateTooltipTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWO
 					TTF_ABSOLUTE | TTF_CENTERTIP;
 		ti.hinst = plugin.hDllInstance;
 		PostMessage(hWndToolTip, TTM_ADDTOOL, NULL, (LPARAM)&ti);
-		SkinToolTip(hWndToolTip);
+
+		SkinWindow(hWndToolTip, SKINNEDWND_TYPE_TOOLTIP, SWS_COMMON_STYLE, 0);
 	}
 }
 
