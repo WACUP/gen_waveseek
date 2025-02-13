@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.25.1"
+#define PLUGIN_VERSION "3.25.2"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -372,6 +372,11 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 			goto abort;
 		}
 
+		// to avoid some visual issues especially if there's a
+		// delay to get the metadata from the local library we
+		// only flag this once we know we're going to read it.
+		bIsProcessing = true;
+
 		while (!kill_threads)
 		{
 			int error = 0;
@@ -526,8 +531,6 @@ void start_live_timer(void)
 	{
 		timer_id = SetTimer(hWndInner, TIMER_ID, TIMER_LIVE_FREQ, NULL);
 	}
-
-	bIsProcessing = true;
 }
 
 int calc_thread_started_callback(HANDLE thread, LPVOID parameter)
@@ -1787,10 +1790,10 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 					wave_points = (LPPOINT)plugin.memmgr->sysMalloc(wave_points_size);
 				}
 
-				FillRectWithColour(cacheDC, &wnd, clrBackground, TRUE);
-
 				if (paint_allowed)
 				{
+					FillRectWithColour(cacheDC, &wnd, clrBackground, TRUE);
+
 					// make the width a bit less so the right-edge
 					// can allow for the end of the track to be
 					// correctly selected or the tooltip show up
