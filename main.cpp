@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.25.2"
+#define PLUGIN_VERSION "3.25.3"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -1391,7 +1391,8 @@ void CALLBACK CreateTooltipTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWO
 		ti.hinst = plugin.hDllInstance;
 		PostMessage(hWndToolTip, TTM_ADDTOOL, NULL, (LPARAM)&ti);
 
-		SkinWindow(hWndToolTip, SKINNEDWND_TYPE_TOOLTIP, SWS_COMMON_STYLE, 0);
+		SkinWindow(hWndToolTip, SKINNEDWND_TYPE_TOOLTIP,
+				   SWS_COMMON_STYLE | SWTTIP_NOZORDERFIX, 0);
 	}
 }
 
