@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.25.3"
+#define PLUGIN_VERSION "3.25.4"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -239,9 +239,9 @@ unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer, const unsig
 	return nAmplitude;
 }
 
-void abort_processing_thread(const HANDLE handle)
+void abort_processing_thread(HANDLE handle)
 {
-	if (handle != NULL)
+	if (CheckThreadHandleIsValid(&handle))
 	{
 		if (WaitForSingleObjectEx(handle, 3000/*/INFINITE/**/, TRUE) == WAIT_TIMEOUT)
 		{
@@ -300,7 +300,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	if (!kill_threads && audioOnly)
 	{
 		if (GetFileInfoHookable((WPARAM)&efis, TRUE, &token, &reentrant,
-									  &item->db_error) && !!WStr2I(buf))
+								NULL, &item->db_error) && !!WStr2I(buf))
 		{
 			plugin.metadata->FreeExtendedFileInfoToken(&token);
 			goto abort;
@@ -320,7 +320,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	if (!kill_threads)
 	{
 		if (GetFileInfoHookable((WPARAM)&efis, TRUE, &token, &reentrant,
-										     &item->db_error) && buf[0])
+									   NULL, &item->db_error) && buf[0])
 		{
 			lengthMS = WStr2I(buf);
 		}
@@ -365,7 +365,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		const uint64_t nExpectedTotalSampleCount = (nFramePerWindow * SAMPLE_BUFFER_SIZE
 													* 1ULL * item->parameters.channels);
 		const int padded_bits = (((item->parameters.bitsPerSample + 7) & (~7)) / 8);
-		const size_t buffer_size = (1152 * item->parameters.channels * padded_bits);
+		const size_t buffer_size = (const size_t)(1152 * item->parameters.channels * padded_bits);
 		char* data = (char*)plugin.memmgr->sysMalloc(buffer_size * 2);	// *2 deals with bad calls
 		if (!data)
 		{
@@ -1097,7 +1097,8 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 
 		ProcessStop();
 
-		bIsLoaded = bUnsupported = false;
+		bIsLoaded = false;
+		bUnsupported = false;
 		bIsCurrent = SameStr((archive ? szArchiveFn : usable_path),
 						  GetPlayingFilename(0, archive_override));
 		if (archive_override[0] && SameStr((archive ? szArchiveFn :
@@ -1127,8 +1128,9 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 			// for a smoother upgrade we'll still look
 			// for the original cache file but a newer
 			// file will be made with the better name.
-			CombinePath(szWaveCacheFile, GetFilePaths(), FindPathFileName((zip_entry &&
-							   archive_override[0] ? archive_override : usable_path)));
+			LPCWSTR folder = GetFilePaths();
+			CombinePath(szWaveCacheFile, folder, FindPathFileName((zip_entry &&
+						archive_override[0] ? archive_override : usable_path)));
 
 			size_t remaining = ARRAYSIZE(szWaveCacheFile);
 			StringCchCatEx(szWaveCacheFile, ARRAYSIZE(szWaveCacheFile),
@@ -1142,13 +1144,12 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 									wcslen(archive_override ): szFilenameLen), cacheFile))
 				{
 					StringCchCat(cacheFile, ARRAYSIZE(cacheFile), L".cache");
-					CombinePath(szWaveCacheFile, GetFilePaths(), cacheFile);
+					CombinePath(szWaveCacheFile, folder, cacheFile);
 				}
 			}
 #else
 			// TODO apply the above to a non-WACUP install
-			CombinePath(szWaveCacheFile, GetFilePaths(),
-						FindPathFileName(usable_path));
+			CombinePath(szWaveCacheFile, folder, FindPathFileName(usable_path));
 			StringCchCat(szWaveCacheFile, ARRAYSIZE(szWaveCacheFile), L".cache");
 #endif
 
@@ -1330,19 +1331,10 @@ void ProcessSkinChange(BOOL skip_refresh = FALSE)
 
 void ClearCacheFolder(const bool mode)
 {
+	LPCWSTR folder = GetFilePaths();
 	for (int i = 0; i < 1 + !!mode; i++)
 	{
-		WIN32_FIND_DATA wfd = { 0 };
-		wchar_t szFnFind[MAX_PATH] = { 0 };
-		HANDLE hFind = SearchFolder(szFnFind, GetFilePaths(), (!i ? L"*.cache" : L"*.dll"), &wfd);
-		if (hFind != INVALID_HANDLE_VALUE)
-		{
-			do
-			{
-				DeleteFile(CombinePath(szFnFind, GetFilePaths(), wfd.cFileName));
-			} while (FindNextFile(hFind, &wfd));
-			FindClose(hFind);
-		}
+		ClearCacheFolder(folder, (!i ? L"*.cache" : L"*.dll"), 0);
 	}
 }
 
@@ -1443,8 +1435,8 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 		{
 			// support the older & newer cache filenames
 			wchar_t filename[MAX_PATH] = { 0 };
-			CombinePath(filename, GetFilePaths(),
-						FindPathFileName(szFilename));
+			LPCWSTR folder = GetFilePaths();
+			CombinePath(filename, folder, FindPathFileName(szFilename));
 
 			size_t remaining = ARRAYSIZE(filename);
 			StringCchCatEx(filename, ARRAYSIZE(filename), L".cache", NULL, &remaining, NULL);
@@ -1467,7 +1459,7 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 					if (GetFilenameHash(szFilename, szFilenameLen, cacheFile))
 					{
 						StringCchCat(cacheFile, ARRAYSIZE(cacheFile), L".cache");
-						if (CheckForPath(filename, GetFilePaths(), cacheFile))
+						if (CheckForPath(filename, folder, cacheFile))
 						{
 							DeleteFile(filename);
 						}
@@ -1776,7 +1768,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 					lastWnd = wnd;
 
-					const size_t wave_points_size = ((w + 4) * sizeof(POINT));
+					const size_t wave_points_size = (const size_t)((w + 4) * sizeof(POINT));
 
 					if (wave_remaining_points)
 					{
