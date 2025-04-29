@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.25.4"
+#define PLUGIN_VERSION "3.25.5"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -161,7 +161,7 @@ wchar_t* GetFilePaths(void)
 		CombinePath(szWaveCacheDir, GetPaths()->settings_sub_dir, L"wavecache");
 #else
 		ini_file = (wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETINIFILEW);
-		(void)StringCchCopy(szWaveCacheDir, ARRAYSIZE(szWaveCacheDir), (wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETINIDIRECTORYW));
+		CopyCchStr(szWaveCacheDir, ARRAYSIZE(szWaveCacheDir), (wchar_t *)SendMessage(plugin.hwndParent, WM_WA_IPC, 0, IPC_GETINIDIRECTORYW));
 		AppendOnPath(szWaveCacheDir, L"Plugins\\wavecache");
 #endif
 
@@ -358,7 +358,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		unsigned short pThreadSampleBuffer[SAMPLE_BUFFER_SIZE] = { 0 };
 
 		memset(pSampleBuffer, 0, SAMPLE_BUFFER_SIZE * sizeof(unsigned short));
-		(void)StringCchCopy(szThreadWaveCacheFile, ARRAYSIZE(szThreadWaveCacheFile), szWaveCacheFile);
+		CopyCchStr(szThreadWaveCacheFile, ARRAYSIZE(szThreadWaveCacheFile), szWaveCacheFile);
 
 		// ensure that the expected count will work with vary large files where there's
 		// millions & billions of samples otherwise it'll abort the rendering too soon!
@@ -366,7 +366,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 													* 1ULL * item->parameters.channels);
 		const int padded_bits = (((item->parameters.bitsPerSample + 7) & (~7)) / 8);
 		const size_t buffer_size = (const size_t)(1152 * item->parameters.channels * padded_bits);
-		char* data = (char*)plugin.memmgr->sysMalloc(buffer_size * 2);	// *2 deals with bad calls
+		char* data = (char*)SafeMalloc(buffer_size * 2);	// *2 deals with bad calls
 		if (!data)
 		{
 			goto abort;
@@ -442,7 +442,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 			}
 		}
 
-		plugin.memmgr->sysFree(data);
+		SafeFree(data);
 
 		if (WASABI_API_DECODEFILE2)
 		{
@@ -514,12 +514,12 @@ abort:
 	if (ms > /*0/*/0.10f/**/)
 	{
 		wchar_t profile[128] = { 0 };
-		StringCchPrintf(profile, ARRAYSIZE(profile), L"%.3fms", ms);
+		PrintfCch(profile, ARRAYSIZE(profile), L"%.3fms", ms);
 		MessageBox(plugin.hwndParent, profile, 0, 0);
 	}
 #endif
-	plugin.memmgr->sysFree((LPVOID)item->filename);
-	plugin.memmgr->sysFree((LPVOID)item);
+	SafeFree((LPVOID)item->filename);
+	SafeFree((LPVOID)item);
 
 	CloseCOM();
 	return 0;
@@ -542,8 +542,8 @@ int calc_thread_started_callback(HANDLE thread, LPVOID parameter)
 	else if (parameter)
 	{
 		CalcThreadParams* item = (CalcThreadParams*)parameter;
-		plugin.memmgr->sysFree((LPVOID)item->filename);
-		plugin.memmgr->sysFree((LPVOID)item);
+		SafeFree((LPVOID)item->filename);
+		SafeFree((LPVOID)item);
 	}
 	return 1;
 }
@@ -569,7 +569,7 @@ HANDLE StartProcessingFile(const wchar_t *szFn, const wchar_t *szArchiveFn,
 			visible = TRUE;
 		}
 
-		CalcThreadParams *item = (CalcThreadParams *)plugin.memmgr->sysMalloc(sizeof(CalcThreadParams));
+		CalcThreadParams *item = (CalcThreadParams *)SafeMalloc(sizeof(CalcThreadParams));
 		if (item)
 		{
 			item->db_error = db_error;
@@ -577,7 +577,7 @@ HANDLE StartProcessingFile(const wchar_t *szFn, const wchar_t *szArchiveFn,
 			item->parameters.channels = 2;
 			item->parameters.bitsPerSample = 24;
 			item->parameters.sampleRate = 44100;
-			item->filename = plugin.memmgr->sysDupStr((wchar_t*)szFn);
+			item->filename = SafeWideDup(szFn);
 
 			const HANDLE CalcThread = StartThread(CalcWaveformThread, item, (!lowerpriority ? THREAD_PRIORITY_HIGHEST :
 															 THREAD_PRIORITY_LOWEST), 0, calc_thread_started_callback);
@@ -714,7 +714,7 @@ HANDLE StartProcessingFile(const wchar_t *szFn, const wchar_t *szArchiveFn,
 
 			if (FileExists(szTempDLLDestination))
 			{
-				hDLL = GetOrLoadDll(szTempDLLDestination, NULL);
+				hDLL = GetOrLoadDll(szTempDLLDestination, NULL, FALSE);
 				if (!hDLL)
 				{
 					return NULL;
@@ -900,7 +900,7 @@ void LoadCUE(wchar_t * szFn)
 	if (showCuePoints)
 	{
 		wchar_t szCue[MAX_PATH] = { 0 };
-		(void)StringCchCopy(szCue, ARRAYSIZE(szCue), szFn);
+		CopyCchStr(szCue, ARRAYSIZE(szCue), szFn);
 		RenameExtension(szCue, L".cue");
 
 		nCueTracks = 0;
@@ -995,26 +995,26 @@ LPWSTR GetTooltipText(HWND hWnd, int pos, int lengthInMS)
 	}
 
 	wchar_t position[32] = { 0 }, total[32] = { 0 };
-	plugin.language->FormattedTimeString(position, ARRAYSIZE(position), sec, 0, NULL);
-	plugin.language->FormattedTimeString(total, ARRAYSIZE(total), total_sec, 0, NULL);
+	FormattedTimeString(position, ARRAYSIZE(position), sec, 0, NULL);
+	FormattedTimeString(total, ARRAYSIZE(total), total_sec, 0, NULL);
 
 	if (nTrack >= 0)
 	{
 		if (pCueTracks[nTrack].szPerformer[0])
 		{
-			StringCchPrintf(coords, ARRAYSIZE(coords), L"%s - %s [%s / %s]",
-							pCueTracks[nTrack].szPerformer,
-							pCueTracks[nTrack].szTitle, position, total);
+			PrintfCch(coords, ARRAYSIZE(coords), L"%s - %s [%s / %s]",
+					  pCueTracks[nTrack].szPerformer,
+					  pCueTracks[nTrack].szTitle, position, total);
 		}
 		else
 		{
-			StringCchPrintf(coords, ARRAYSIZE(coords), L"%s [%s / %s]",
-							pCueTracks[nTrack].szTitle, position, total);
+			PrintfCch(coords, ARRAYSIZE(coords), L"%s [%s / %s]",
+					  pCueTracks[nTrack].szTitle, position, total);
 		}
 	}
 	else
 	{
-		StringCchPrintf(coords, ARRAYSIZE(coords), L"%s / %s", position, total);
+		PrintfCch(coords, ARRAYSIZE(coords), L"%s / %s", position, total);
 	}
 
 	return coords;
@@ -1107,10 +1107,7 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 			bIsCurrent = true;
 		}
 
-		size_t filename_remaining = ARRAYSIZE(szFilename);
-		(void)StringCchCopyEx(szFilename, ARRAYSIZE(szFilename),
-				  usable_path, NULL, &filename_remaining, NULL);
-		szFilenameLen = (ARRAYSIZE(szFilename) - filename_remaining);
+		szFilenameLen = CopyCchStrEx(szFilename, ARRAYSIZE(szFilename), usable_path);
 
 		nCueTracks = 0;
 
@@ -1131,10 +1128,7 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 			LPCWSTR folder = GetFilePaths();
 			CombinePath(szWaveCacheFile, folder, FindPathFileName((zip_entry &&
 						archive_override[0] ? archive_override : usable_path)));
-
-			size_t remaining = ARRAYSIZE(szWaveCacheFile);
-			StringCchCatEx(szWaveCacheFile, ARRAYSIZE(szWaveCacheFile),
-									L".cache", NULL, &remaining, NULL);
+			CatCchStr(szWaveCacheFile, ARRAYSIZE(szWaveCacheFile), L".cache");
 
 			if (!FileExists(szWaveCacheFile))
 			{
@@ -1143,14 +1137,14 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 									usable_path), (zip_entry && archive_override[0] ?
 									wcslen(archive_override ): szFilenameLen), cacheFile))
 				{
-					StringCchCat(cacheFile, ARRAYSIZE(cacheFile), L".cache");
+					CatCchStr(cacheFile, ARRAYSIZE(cacheFile), L".cache");
 					CombinePath(szWaveCacheFile, folder, cacheFile);
 				}
 			}
 #else
 			// TODO apply the above to a non-WACUP install
 			CombinePath(szWaveCacheFile, folder, FindPathFileName(usable_path));
-			StringCchCat(szWaveCacheFile, ARRAYSIZE(szWaveCacheFile), L".cache");
+			CatCchStr(szWaveCacheFile, ARRAYSIZE(szWaveCacheFile), L".cache");
 #endif
 
 			if (!FileExists(szWaveCacheFile))
@@ -1407,8 +1401,8 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 		}
 		case ID_SUBMENU_CLEARWAVCACHE:
 		{
-			if (MessageBox(parent, WASABI_API_LNGSTRINGW(IDS_CLEAR_CACHE),
-						   (LPWSTR)plugin.description, MB_YESNO | MB_ICONQUESTION) != IDYES)
+			if (MessageBox(parent, LangString(IDS_CLEAR_CACHE), (LPWSTR)
+				plugin.description, MB_YESNO | MB_ICONQUESTION) != IDYES)
 			{
 				break;
 			}
@@ -1437,9 +1431,7 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 			wchar_t filename[MAX_PATH] = { 0 };
 			LPCWSTR folder = GetFilePaths();
 			CombinePath(filename, folder, FindPathFileName(szFilename));
-
-			size_t remaining = ARRAYSIZE(filename);
-			StringCchCatEx(filename, ARRAYSIZE(filename), L".cache", NULL, &remaining, NULL);
+			CatCchStr(filename, ARRAYSIZE(filename), L".cache");
 
 			if (FileExists(filename))
 			{
@@ -1458,7 +1450,7 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 					wchar_t cacheFile[61] = { 0 };
 					if (GetFilenameHash(szFilename, szFilenameLen, cacheFile))
 					{
-						StringCchCat(cacheFile, ARRAYSIZE(cacheFile), L".cache");
+						CatCchStr(cacheFile, ARRAYSIZE(cacheFile), L".cache");
 						if (CheckForPath(filename, folder, cacheFile))
 						{
 							DeleteFile(filename);
@@ -1599,7 +1591,7 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 		case ID_SUBMENU_ABOUT:
 		{
 			wchar_t message[512] = { 0 };
-			StringCchPrintf(message, ARRAYSIZE(message), WASABI_API_LNGSTRINGW(IDS_ABOUT_STRING), TEXT(__DATE__));
+			PrintfCch(message, ARRAYSIZE(message), LangString(IDS_ABOUT_STRING), TEXT(__DATE__));
 			//MessageBox(plugin.hwndParent, message, pluginTitleW, 0);
 			AboutMessageBox(plugin.hwndParent, message, (LPWSTR)plugin.description);
 			break;
@@ -1772,15 +1764,15 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 					if (wave_remaining_points)
 					{
-						plugin.memmgr->sysFree(wave_remaining_points);
+						SafeFree(wave_remaining_points);
 					}
-					wave_remaining_points = (LPPOINT)plugin.memmgr->sysMalloc(wave_points_size);
+					wave_remaining_points = (LPPOINT)SafeMalloc(wave_points_size);
 
 					if (wave_points)
 					{
-						plugin.memmgr->sysFree(wave_points);
+						SafeFree(wave_points);
 					}
-					wave_points = (LPPOINT)plugin.memmgr->sysMalloc(wave_points_size);
+					wave_points = (LPPOINT)SafeMalloc(wave_points_size);
 				}
 
 				if (paint_allowed)
@@ -1968,10 +1960,10 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 							SetBkColor(cacheDC, clrBackground);
 							SetTextColor(cacheDC, clrGeneratingText);
 
-							DrawText(cacheDC, (!IsPathURL(szFilename) && !IsZipEntry(szFilename) ?
-									 ((bUnsupported == 2) ? szBadPlugin : ((bUnsupported == 3) ?
-									 szLegacy : szUnavailable)) : szStreamsNotSupported), -1, &wnd,
-									 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+							DrawTextEx(cacheDC, (!IsPathURL(szFilename) && !IsZipEntry(szFilename) ?
+									   ((bUnsupported == 2) ? szBadPlugin : ((bUnsupported == 3) ?
+									   szLegacy : szUnavailable)) : szStreamsNotSupported), -1, &wnd,
+									   DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, NULL);
 
 							SelectObject(cacheDC, old_font);
 						}
@@ -2012,7 +2004,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 									for (int j = 0; j < ((w / 256) + 1); j++)
 									{
 #define num_points 4096
-										LPPOINT points = (LPPOINT)plugin.memmgr->sysMalloc(num_points * sizeof(POINT));
+										LPPOINT points = (LPPOINT)SafeMalloc(num_points * sizeof(POINT));
 										if (points)
 										{
 											for (int i = 0; i < num_points; i++)
@@ -2030,7 +2022,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 												FillRgn(thisdc, rgn, waveformPlayed);
 												DeleteObject(rgn);
 											}
-											plugin.memmgr->sysFree(points);
+											SafeFree(points);
 										}
 									}
 
@@ -2110,7 +2102,7 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			int xPos = GET_X_LPARAM(lParam),
 				yPos = GET_Y_LPARAM(lParam);
 
-			HMENU hMenu = WASABI_API_LOADMENUW(IDR_CONTEXTMENU);
+			HMENU hMenu = LangLoadMenu(IDR_CONTEXTMENU);
 			HMENU popup = GetSubMenu(hMenu, 0);
 			SetupConfigMenu(popup);
 
@@ -2366,14 +2358,14 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				// finally we add menu items to the main right-click menu and the views menu
 				// with Modern skins which support showing the views menu for accessing windows
 				wchar_t lang_string[32] = { 0 };
-				AddEmbeddedWindowToMenus(WINAMP_WAVEFORM_SEEK_MENUID, WASABI_API_LNGSTRINGW_BUF(IDS_WAVEFORM_SEEKER_MENU,
-																	  lang_string, ARRAYSIZE(lang_string)), visible, -1);
+				AddEmbeddedWindowToMenus(WINAMP_WAVEFORM_SEEK_MENUID, LngStringCopy(IDS_WAVEFORM_SEEKER_MENU,
+														  lang_string, ARRAYSIZE(lang_string)), visible, -1);
 
 				// now we will attempt to create an embedded window which adds its own main menu entry
 				// and related keyboard accelerator (like how the media library window is integrated)
 				embed.flags |= EMBED_FLAGS_SCALEABLE_WND;	// double-size support!
-				hWndWaveseek = CreateEmbeddedWindow(&embed, embed_guid, WASABI_API_LNGSTRINGW_BUF(IDS_WAVEFORM_SEEKER,
-																				lang_string, ARRAYSIZE(lang_string)));
+				hWndWaveseek = CreateEmbeddedWindow(&embed, embed_guid, LngStringCopy(IDS_WAVEFORM_SEEKER,
+																	lang_string, ARRAYSIZE(lang_string)));
 
 #ifndef _WIN64
 				// there's no need to be subclassing the
@@ -2407,7 +2399,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 						// as it can otherwise cause some occassional drawing issues/clashes.
 						//SetProp(hWndInner, L"SKPrefs_Ignore", (HANDLE)1);
 
-						HACCEL accel = WASABI_API_LOADACCELERATORSW(IDR_ACCELERATOR_WND);
+						HACCEL accel = LangAcceleratorTable(IDR_ACCELERATOR_WND);
 						if (accel)
 						{
 							WASABI_API_APP->app_addAccelerators(hWndInner, &accel, 1, TRANSLATE_MODE_NORMAL);
@@ -2415,10 +2407,10 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 					}
 				}
 
-				WASABI_API_LNGSTRINGW_BUF(IDS_WAVEFORM_UNAVAILABLE, szUnavailable, ARRAYSIZE(szUnavailable));
-				WASABI_API_LNGSTRINGW_BUF(IDS_WAVEFORM_UNAVAILABLE_BAD_PLUGIN, szBadPlugin, ARRAYSIZE(szBadPlugin));
-				WASABI_API_LNGSTRINGW_BUF(IDS_STREAMS_NOT_SUPPORTED, szStreamsNotSupported, ARRAYSIZE(szStreamsNotSupported));
-				WASABI_API_LNGSTRINGW_BUF(IDS_TRY_LEGACY_MODE, szLegacy, ARRAYSIZE(szLegacy));
+				LngStringCopy(IDS_WAVEFORM_UNAVAILABLE, szUnavailable, ARRAYSIZE(szUnavailable));
+				LngStringCopy(IDS_WAVEFORM_UNAVAILABLE_BAD_PLUGIN, szBadPlugin, ARRAYSIZE(szBadPlugin));
+				LngStringCopy(IDS_STREAMS_NOT_SUPPORTED, szStreamsNotSupported, ARRAYSIZE(szStreamsNotSupported));
+				LngStringCopy(IDS_TRY_LEGACY_MODE, szLegacy, ARRAYSIZE(szLegacy));
 
 				// Note: WASABI_API_APP->app_addAccelerators(..) requires Winamp 5.53 and higher
 				//       otherwise if you want to support older clients then you could use the
@@ -2514,19 +2506,18 @@ int PluginInit(void)
 #ifdef WACUP_BUILD
 		WASABI_API_APP = plugin.app;
 
-		WASABI_API_START_LANG_DESC(plugin.language, plugin.hDllInstance,
-								   embed_guid, IDS_PLUGIN_NAME, TEXT(
-								   PLUGIN_VERSION), &plugin.description);
+		StartPluginLangWithDesc(plugin.hDllInstance, embed_guid, IDS_PLUGIN_NAME,
+									  TEXT(PLUGIN_VERSION), &plugin.description);
 #else
 		ServiceBuild(WASABI_API_SVC, WASABI_API_APP, applicationApiServiceGuid);
 		ServiceBuild(WASABI_API_SVC, WASABI_API_LNG, languageApiGUID);
 
 		// TODO add to lang.h
-		WASABI_API_START_LANG(plugin.hDllInstance, embed_guid);
+		StartPluginLangOnly(plugin.hDllInstance, embed_guid);
 
 		wchar_t	pluginTitleW[256] = { 0 };
-		StringCchPrintf(pluginTitleW, ARRAYSIZE(pluginTitleW), WASABI_API_LNGSTRINGW(IDS_PLUGIN_NAME), TEXT(PLUGIN_VERSION));
-		plugin.description = (char*)plugin.memmgr->sysDupStr(pluginTitleW);
+		PrintfCch(pluginTitleW, ARRAYSIZE(pluginTitleW), LangString(IDS_PLUGIN_NAME), TEXT(PLUGIN_VERSION));
+		plugin.description = (char*)SafeWideDup(pluginTitleW);
 #endif
 
 		InitializeCriticalSectionEx(&processing_cs, 400, CRITICAL_SECTION_NO_DEBUG_INFO);
@@ -2544,7 +2535,7 @@ int PluginInit(void)
 
 void PluginConfig()
 {
-	HMENU hMenu = WASABI_API_LOADMENUW(IDR_CONTEXTMENU);
+	HMENU hMenu = LangLoadMenu(IDR_CONTEXTMENU);
 	HMENU popup = GetSubMenu(hMenu, 0);
 
 	MENUITEMINFO i = { sizeof(i), MIIM_ID | MIIM_STATE | MIIM_TYPE,
@@ -2617,9 +2608,8 @@ extern "C" __declspec(dllexport) winampGeneralPurposePlugin * winampGetGeneralPu
 extern "C" __declspec(dllexport) int winampUninstallPlugin(HINSTANCE hDllInst, HWND hwndDlg, int param)
 {
 	// prompt to remove our settings with default as no (just incase)
-	if (plugin.language->UninstallSettingsPrompt(reinterpret_cast<const wchar_t*>(plugin.description)))
+	if (UninstallSettingsPrompt(reinterpret_cast<const wchar_t*>(plugin.description), WINAMP_INI, L"Waveseek"))
 	{
-		SaveNativeIniString(WINAMP_INI, L"Waveseek", 0, 0);
 		no_uninstall = 0;
 	}
 
