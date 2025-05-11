@@ -28,7 +28,7 @@ HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID
 	
 	//TODO map from the old values?
 	const int right = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"wnd_right", -1),
-		bottom = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"wnd_bottom", -1);
+			  bottom = GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"wnd_bottom", -1);
 
 	if (right != -1)
 	{
@@ -71,8 +71,8 @@ void DestroyEmbeddedWindow(embedWindowState* embedWindow)
 	// skip saving the current window position otherwise
 	// we have the issue with windows being in the wrong
 	// places after modern -> exit -> modern -> classic
-	if (!embedWindow->wasabi_window &&
-		!EqualRect(&initial[0], &embedWindow->r))
+	if (embedWindow && !embedWindow->wasabi_window &&
+			!EqualRect(&initial[0], &embedWindow->r))
 	{
 		SaveNativeIniInt(WINAMP_INI, INI_FILE_SECTION,
 						 L"PosX", embedWindow->r.left);
@@ -265,7 +265,7 @@ void HandleEmbeddedWindowWinampWindowMessages(HWND embedWnd, UINT_PTR menuId, em
 		}
 		else if (LOWORD(wParam) == WINAMP_REFRESHSKIN)
 		{
-			if (!GetParent(embedWnd))
+			if (!GetParent(embedWnd) && embedWindow)
 			{
 				width = (embedWindow->r.right - embedWindow->r.left);
 				height = (embedWindow->r.bottom - embedWindow->r.top);
