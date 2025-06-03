@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.26"
+#define PLUGIN_VERSION "3.26.2"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -242,13 +242,7 @@ unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer, const unsig
 
 void abort_processing_thread(HANDLE handle)
 {
-	if (CheckThreadHandleIsValid(&handle))
-	{
-		if (WaitForSingleObjectEx(handle, 3000/*/INFINITE/**/, TRUE) == WAIT_TIMEOUT)
-		{
-			CloseHandle(handle);
-		}
-	}
+	WaitForThreadToClose(&handle, 3000/*/INFINITE/**/);
 }
 
 void ClearProcessingHandles(void)
@@ -267,6 +261,8 @@ void ClearProcessingHandles(void)
 
 	// make sure we're good
 	processing_list.clear();
+
+	LeaveCriticalSection(&processing_cs);
 }
 
 typedef struct
