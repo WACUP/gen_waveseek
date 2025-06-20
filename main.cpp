@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.26.2"
+#define PLUGIN_VERSION "3.26.3"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -1438,13 +1438,13 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 
 			if (FileExists(filename))
 			{
-				DeleteFile(filename);
+				RemoveFile(filename);
 			}
 			else
 			{
 				if (FileExists(szWaveCacheFile))
 				{
-					DeleteFile(szWaveCacheFile);
+					RemoveFile(szWaveCacheFile);
 				}
 				else
 				{
@@ -1456,7 +1456,7 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 						CatCchStr(cacheFile, ARRAYSIZE(cacheFile), L".cache");
 						if (CheckForPath(filename, folder, cacheFile))
 						{
-							DeleteFile(filename);
+							RemoveFile(filename);
 						}
 					}
 				}
@@ -2606,7 +2606,7 @@ void PluginQuit()
 #ifndef _WIN64
 	if (FileExists(szTempDLLDestination))
 	{
-		DeleteFile(szTempDLLDestination);
+		RemoveFile(szTempDLLDestination);
 	}
 #endif
 
