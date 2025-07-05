@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.26.3"
+#define PLUGIN_VERSION "3.26.5"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -914,9 +914,14 @@ void LoadCUE(wchar_t * szFn)
 		}
 
 		int nCurrentTrack = 0;
-		wchar_t strs[256] = { 0 };
-		while (fgetws(strs, ARRAYSIZE(strs), f))
+		wchar_t strs[256]/* = { 0 }*/;
+		while (fgetws_with_len(strs, ARRAYSIZE(strs), f, NULL))
 		{
+			if (feof(f))
+			{
+				break;
+			}
+
 			wchar_t* str = strs;
 			while ((*str == L' ') || (*str == L'\r') || (*str == L'\n'))
 			{
@@ -1135,12 +1140,11 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 
 			if (!FileExists(szWaveCacheFile))
 			{
-				wchar_t cacheFile[61]/* = { 0 }*/;
-				if (GetFilenameHash((zip_entry && archive_override[0] ? archive_override :
-									usable_path), (zip_entry && archive_override[0] ?
-									wcslen(archive_override ): szFilenameLen), cacheFile))
+				wchar_t cacheFile[48]/* = { 0 }*/;
+				if (GetFilenameHash((zip_entry && archive_override[0] ? archive_override : usable_path),
+									(zip_entry && archive_override[0] ? wcslen(archive_override ):
+									szFilenameLen), cacheFile, L".cache"))
 				{
-					CatCchStr(cacheFile, ARRAYSIZE(cacheFile), L".cache");
 					CombinePath(szWaveCacheFile, folder, cacheFile);
 				}
 			}
@@ -1247,7 +1251,7 @@ void ProcessSkinChange(BOOL skip_refresh = FALSE)
 	// get the current skin and use that as a
 	// means to control the colouring used
 	wchar_t szBuffer[MAX_PATH]/* = { 0 }*/;
-	GetCurrentSkin(szBuffer, ARRAYSIZE(szBuffer));
+	GetCurrentSkin(szBuffer, ARRAYSIZE(szBuffer), NULL);
 
 	if (szBuffer[0])
 	{
@@ -1281,8 +1285,7 @@ void ProcessSkinChange(BOOL skip_refresh = FALSE)
 	if (szBuffer[0])
 	{
 		// look for the file that classic skins could provide
-		AppendOnPath(szBuffer, L"waveseek.txt");
-		if (FileExists(szBuffer))
+		if (FileExists(AppendOnPath(szBuffer, L"waveseek.txt")))
 		{
 			clrBackground = GetPrivateProfileHex(L"colours", L"background", clrBackground, szBuffer);
 			clrCuePoint = GetPrivateProfileHex(L"colours", L"cue_point", clrCuePoint, szBuffer);
@@ -1450,10 +1453,9 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 				{
 					// thisis the final attempt to get a match which shouldn't
 					// typically ever end up being called especially for zips!
-					wchar_t cacheFile[61]/* = { 0 }*/;
-					if (GetFilenameHash(szFilename, szFilenameLen, cacheFile))
+					wchar_t cacheFile[48]/* = { 0 }*/;
+					if (GetFilenameHash(szFilename, szFilenameLen, cacheFile, L".cache"))
 					{
-						CatCchStr(cacheFile, ARRAYSIZE(cacheFile), L".cache");
 						if (CheckForPath(filename, folder, cacheFile))
 						{
 							RemoveFile(filename);
