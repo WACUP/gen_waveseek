@@ -1,5 +1,4 @@
 #include <windows.h>
-#include <strsafe.h>
 #include "embedwnd.h"
 #include <winamp/wa_cup.h>
 #include <loader/loader/utils.h>

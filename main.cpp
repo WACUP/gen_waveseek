@@ -42,7 +42,6 @@
 //#define WA_DLG_IMPLEMENT
 #define WA_DLG_IMPORTS
 #include <winamp/wa_dlg.h>
-#include <strsafe.h>
 
 #ifndef ID_PE_SCUP
 #define ID_PE_SCUP   40289
