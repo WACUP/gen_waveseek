@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.26.5"
+#define PLUGIN_VERSION "3.27"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -543,8 +543,8 @@ int calc_thread_started_callback(HANDLE thread, LPVOID parameter)
 	return 1;
 }
 
-HANDLE StartProcessingFile(const wchar_t *szFn, const wchar_t *szArchiveFn,
-						   const bool start_playing, const INT_PTR db_error)
+HANDLE StartProcessingFile(const wchar_t *szFn, const size_t szFnLen, const wchar_t *szArchiveFn,
+												const bool start_playing, const INT_PTR db_error)
 {
 #ifndef _WIN64
 	pModule = NULL;
@@ -572,7 +572,7 @@ HANDLE StartProcessingFile(const wchar_t *szFn, const wchar_t *szArchiveFn,
 			item->parameters.channels = 2;
 			item->parameters.bitsPerSample = 24;
 			item->parameters.sampleRate = 44100;
-			item->filename = SafeWideDup(szFn);
+			item->filename = SafeWideDupN(szFn, szFnLen);
 
 			const HANDLE CalcThread = StartThread(CalcWaveformThread, item, (!lowerpriority ? THREAD_PRIORITY_HIGHEST :
 															 THREAD_PRIORITY_LOWEST), 0, calc_thread_started_callback);
@@ -1071,8 +1071,9 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 		wchar_t usable_path[MAX_PATH]/* = { 0 }*/,
 				archive_override[FILENAME_SIZE]/* = { 0 }*/;
 		const bool archive = (szArchiveFn && *szArchiveFn);
+		size_t usable_len = 0;
 		ProcessPath((archive ? szArchiveFn : szFn), usable_path,
-						   ARRAYSIZE(usable_path), FALSE, NULL);
+					ARRAYSIZE(usable_path), FALSE, &usable_len);
 
 		// we can sometimes see this message before the following
 		// delay load message so we need to ensure that the paths
@@ -1088,7 +1089,7 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 			// out and keep going if it's the same file.
 			wchar_t buffer[FILENAME_SIZE]/* = { 0 }*/;
 			bIsCurrent = SameStr(usable_path, GetPlayingFilename(0, archive_override,
-														 buffer, ARRAYSIZE(buffer)));
+												   buffer, ARRAYSIZE(buffer), NULL));
 			if (archive_override[0] && SameStr((archive ? szArchiveFn :
 									   usable_path), archive_override))
 			{
@@ -1107,7 +1108,7 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 		wchar_t buffer[FILENAME_SIZE]/* = { 0 }*/;
 		bIsCurrent = SameStr((archive ? szArchiveFn : usable_path),
 						  GetPlayingFilename(0, archive_override,
-									 buffer, ARRAYSIZE(buffer)));
+							   buffer, ARRAYSIZE(buffer), NULL));
 		if (archive_override[0] && SameStr((archive ? szArchiveFn :
 								   usable_path), archive_override))
 		{
@@ -1192,11 +1193,11 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 				const bool can_process = (count < cpu_count);
 				if (can_process)
 				{
-					const HANDLE thread = StartProcessingFile(usable_path, szArchiveFn,
-															  start_playing, db_error);
+					const HANDLE thread = StartProcessingFile(usable_path, usable_len,
+												szArchiveFn, start_playing, db_error);
 					if (thread != NULL)
 					{
-						processing_list[std::wstring(usable_path)] = thread;
+						processing_list[std::wstring(usable_path, usable_len)] = thread;
 					}
 				}
 
