@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.27"
+#define PLUGIN_VERSION "3.27.2"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -1106,9 +1106,10 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 		bUnsupported = false;
 
 		wchar_t buffer[FILENAME_SIZE]/* = { 0 }*/;
-		bIsCurrent = SameStr((archive ? szArchiveFn : usable_path),
-						  GetPlayingFilename(0, archive_override,
-							   buffer, ARRAYSIZE(buffer), NULL));
+		bIsCurrent = (SameStr((archive ? szArchiveFn : usable_path),
+					  GetPlayingFilename(0, archive_override, buffer,
+					  ARRAYSIZE(buffer), NULL)) || SameStr((archive ?
+							szArchiveFn : usable_path), szFilename));
 		if (archive_override[0] && SameStr((archive ? szArchiveFn :
 								   usable_path), archive_override))
 		{
