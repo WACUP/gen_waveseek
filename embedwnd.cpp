@@ -37,7 +37,7 @@ HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID
 	else
 	{
 		embedWindow->r.right = embedWindow->r.left + GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"SizeX",
-																 (!!GetWinampIniInt(L"ML", 1) ? 500 : 275));
+																  (GetWinampIniBool(L"ML", 1) ? 500 : 275));
 	}
 
 	if (bottom != -1)

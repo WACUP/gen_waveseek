@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.27.2"
+#define PLUGIN_VERSION "3.27.3"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -276,7 +276,7 @@ DWORD WINAPI CalcWaveformThread(LPVOID lp)
 //#define USE_PROFILING
 #ifdef USE_PROFILING
 	LARGE_INTEGER starttime/* = { 0 }*/, endtime/* = { 0 }*/;
-	QueryPerformanceCounter(&starttime);
+	GetPerfCounterNow(&starttime, NULL);
 #endif
 
 	(void)CreateCOM();
@@ -504,7 +504,7 @@ abort:
 	}
 
 #ifdef USE_PROFILING
-	QueryPerformanceCounter(&endtime);
+	GetPerfCounterNow(&endtime, NULL);
 	const float ms = ((endtime.QuadPart - starttime.QuadPart) * 1000.0f / PerfFreq().QuadPart);
 	if (ms > /*0/*/0.10f/**/)
 	{
@@ -2401,7 +2401,8 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 
 				// now we will attempt to create an embedded window which adds its own main menu entry
 				// and related keyboard accelerator (like how the media library window is integrated)
-				embed->flags |= EMBED_FLAGS_SCALEABLE_WND;	// double-size support!
+				embed->flags |= EMBED_FLAGS_SCALEABLE_WND |	// double-size support!
+							 EMBED_FLAGS_REDRAW_ON_MOVING;	// redraw whilst moving so we keep updating
 				hWndWaveseek = CreateEmbeddedWindow(embed, embed_guid, LngStringCopy(IDS_WAVEFORM_SEEKER,
 																   lang_string, ARRAYSIZE(lang_string)));
 
