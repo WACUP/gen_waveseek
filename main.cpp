@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.27.3"
+#define PLUGIN_VERSION "3.27.4"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -2012,6 +2012,9 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 								FillRectWithColour(hdcMem2, &wnd, clrBackground, TRUE);
 
+								LPPOINT points = (LPPOINT)SafeMalloc(4096 * sizeof(POINT));
+								if (points)
+								{
 								// draw a sine wave to indicate we're still
 								// there but that we've not got anything to
 								// show either from being missing / invalid
@@ -2033,29 +2036,24 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 									}
 
 									const bool playing = (k && (nBufPos > 0));
+
 									for (int j = 0; j < ((w / 256) + 1); j++)
 									{
-#define num_points 4096
-										LPPOINT points = (LPPOINT)SafeMalloc(num_points * sizeof(POINT));
-										if (points)
-										{
-											for (int i = 0; i < num_points; i++)
+											for (int i = 0; i < 4096; i++)
 											{
-												points[i].x = (j * 256) + ((i * 256) / num_points);
-												points[i].y = (int)((h / 2.0f) * (1 - sin((4.0f * M_PI) * i / num_points)));
+												points[i].x = (j * 256) + ((i * 256) / 4096);
+												points[i].y = (int)((h / 2.0f) * (1 - sin((4.0f * M_PI) * i / 4096)));
 											}
 
-											PolylineTo(thisdc, points, num_points);
+											PolylineTo(thisdc, points, 4096);
 
 											// only fill in things when its needed
-											const HRGN rgn = (playing ? CreatePolygonRgn(points, num_points, ALTERNATE) : NULL);
+											const HRGN rgn = (playing ? CreatePolygonRgn(points, 4096, ALTERNATE) : NULL);
 											if (rgn)
 											{
 												FillRgn(thisdc, rgn, waveformPlayed);
 												DeleteObject(rgn);
 											}
-											SafeFree(points);
-										}
 									}
 
 									// ensure the middle line will show in playing mode
@@ -2072,6 +2070,9 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 								{
 									BitBlt(cacheDC, 0, 0, MulDiv(nSongPos, w,
 										   nSongLen), h, hdcMem2, 0, 0, SRCCOPY);
+								}
+
+									SafeFree(points);
 								}
 
 								SelectObject(hdcMem2, hbmOld2);
