@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.27.4"
+#define PLUGIN_VERSION "3.27.5"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
