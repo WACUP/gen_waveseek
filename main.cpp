@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.27.5"
+#define PLUGIN_VERSION "3.27.6"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -88,18 +88,18 @@ api_decodefile2 *WASABI_API_DECODEFILE2 = NULL;
 
 SETUP_API_LNG_VARS;
 
-void DummySAVSAInit(const int maxlatency_in_ms, const int srate) {}
-void DummySAVSADeInit() {}
-void DummySAAddPCMData(const void *PCMData, const int nch, const int bps, const int timestamp) {}
-int DummySAGetMode() { return 0; }
-int DummySAAdd(const void *data, const int timestamp, const int csa) { return 0; }
-void DummyVSAAddPCMData(const void *PCMData, const int nch, const int bps, const int timestamp) {}
-int DummyVSAGetMode(int *specNch, int *waveNch) { return 0; }
-int DummyVSAAdd(const void *data, const int timestamp) { return 0; }
-void DummyVSASetInfo(const int srate, const int nch) {}
-void DummySetInfo(const int bitrate, const int srate, const int stereo, const int synched) {}
-
 #ifndef _WIN64
+static void DummySAVSAInit(const int maxlatency_in_ms, const int srate) {}
+static void DummySAVSADeInit() {}
+static void DummySAAddPCMData(const void *PCMData, const int nch, const int bps, const int timestamp) {}
+static int DummySAGetMode() { return 0; }
+static int DummySAAdd(const void *data, const int timestamp, const int csa) { return 0; }
+static void DummyVSAAddPCMData(const void *PCMData, const int nch, const int bps, const int timestamp) {}
+static int DummyVSAGetMode(int *specNch, int *waveNch) { return 0; }
+static int DummyVSAAdd(const void *data, const int timestamp) { return 0; }
+static void DummyVSASetInfo(const int srate, const int nch) {}
+static void DummySetInfo(const int bitrate, const int srate, const int stereo, const int synched) {}
+
 LRESULT CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
 							  UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 #endif
@@ -149,7 +149,7 @@ COLORREF clrWaveform = RGB(0, 255, 0),
 
 void PluginConfig();
 
-const wchar_t* GetFilePaths(void)
+static const wchar_t* GetFilePaths(void)
 {
 	static const wchar_t *szWaveCacheDir;
 	if (!szWaveCacheDir)
@@ -180,7 +180,7 @@ const wchar_t* GetFilePaths(void)
 }
 
 #ifndef _WIN64
-int GetFileInfo(const bool unicode, char* szFn, char szFile[MAX_PATH])
+static int GetFileInfo(const bool unicode, char* szFn, char szFile[MAX_PATH])
 {
 	wchar_t szTitle[GETFILEINFO_TITLE_LENGTH] = { 0 };
 	int lengthInMS = -1;
@@ -192,25 +192,12 @@ int GetFileInfo(const bool unicode, char* szFn, char szFile[MAX_PATH])
 	pModule->GetFileInfo((unicode ? (char*)szFn : szFile), (char*)szTitle, &lengthInMS);
 	return lengthInMS;
 }
-
-void MPG123HotPatch(HINSTANCE module)
-{
-	const patch_block blocks[] =
-	{
-		{0x7740, 2, 0, "\x75\x05\xE8\x89\xFD\xFF\xFF\x6A", "\xEB\x00"}, // 109.2 SSE2
-		{0x76CB, 2, 0, "\x75\x05\xE8\x8E\xFD\xFF\xFF\x6A", "\xEB\x00"}, // 109.2 normal
-		{0x7290, 2, 0, "\x75\x05\xE8\x89\xFE\xFF\xFF\x53", "\xEB\x00"},	// 112.1 SSE2
-		{0x725B, 2, 0, "\x75\x05\xE8\x8E\xFE\xFF\xFF\x53", "\xEB\x00"}, // 112.1 normal
-	};
-
-	ApplyPatch(module, blocks, ARRAYSIZE(blocks));
-}
 #endif
 
-unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer, const unsigned int nSample,
-							  const unsigned int nFramePerWindow, const unsigned int nNumChannels,
-							  unsigned long nAmplitude, unsigned long &nSampleCount,
-							  unsigned int &nBufferPointer, uint64_t &nTotalSampleCount)
+static unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer, const unsigned int nSample,
+									const unsigned int nFramePerWindow, const unsigned int nNumChannels,
+									unsigned long nAmplitude, unsigned long &nSampleCount,
+									unsigned int &nBufferPointer, uint64_t &nTotalSampleCount)
 {
 	if (!kill_threads)
 	{
@@ -239,12 +226,12 @@ unsigned long AddThreadSample(LPCWSTR szFn, unsigned short *pBuffer, const unsig
 	return nAmplitude;
 }
 
-void abort_processing_thread(HANDLE handle)
+static void abort_processing_thread(HANDLE handle)
 {
 	WaitForThreadToClose(&handle, 3000/*/INFINITE/**/);
 }
 
-void ClearProcessingHandles(void)
+static void ClearProcessingHandles(void)
 {
 	ProcessStop((kill_threads == 2));
 
@@ -271,7 +258,7 @@ typedef struct
 	AudioParameters parameters;
 } CalcThreadParams;
 
-DWORD WINAPI CalcWaveformThread(LPVOID lp)
+static DWORD WINAPI CalcWaveformThread(LPVOID lp)
 {
 //#define USE_PROFILING
 #ifdef USE_PROFILING
@@ -520,7 +507,7 @@ abort:
 	return 0;
 }
 
-void start_live_timer(void)
+static void start_live_timer(void)
 {
 	if (IsWindow(hWndInner))
 	{
@@ -528,7 +515,7 @@ void start_live_timer(void)
 	}
 }
 
-int calc_thread_started_callback(HANDLE thread, LPVOID parameter)
+static int calc_thread_started_callback(HANDLE thread, LPVOID parameter)
 {
 	if (thread != NULL)
 	{
@@ -543,8 +530,8 @@ int calc_thread_started_callback(HANDLE thread, LPVOID parameter)
 	return 1;
 }
 
-HANDLE StartProcessingFile(const wchar_t *szFn, const size_t szFnLen, const wchar_t *szArchiveFn,
-												const bool start_playing, const INT_PTR db_error)
+static HANDLE StartProcessingFile(const wchar_t *szFn, const size_t szFnLen, const wchar_t *szArchiveFn,
+													  const bool start_playing, const INT_PTR db_error)
 {
 #ifndef _WIN64
 	pModule = NULL;
@@ -726,7 +713,15 @@ HANDLE StartProcessingFile(const wchar_t *szFn, const size_t szFnLen, const wcha
 					// the first file has been processed which was ok when we
 					// unloaded the input plug-in after use (which isn't good
 					// for most other plug-ins out there i.e. hang on close!)
-					MPG123HotPatch(hDLL);
+					const patch_block blocks[] =
+					{
+						{0x7740, 2, 0, "\x75\x05\xE8\x89\xFD\xFF\xFF\x6A", "\xEB\x00"}, // 109.2 SSE2
+						{0x76CB, 2, 0, "\x75\x05\xE8\x8E\xFD\xFF\xFF\x6A", "\xEB\x00"}, // 109.2 normal
+						{0x7290, 2, 0, "\x75\x05\xE8\x89\xFE\xFF\xFF\x53", "\xEB\x00"},	// 112.1 SSE2
+						{0x725B, 2, 0, "\x75\x05\xE8\x8E\xFE\xFF\xFF\x53", "\xEB\x00"}, // 112.1 normal
+					};
+
+					ApplyPatch(hDLL, blocks, ARRAYSIZE(blocks));
 				}
 #endif
 
@@ -892,7 +887,7 @@ typedef struct {
 int nCueTracks = 0;
 CUETRACK pCueTracks[256] = { 0 };
 
-void LoadCUE(wchar_t * szFn)
+static void LoadCUE(wchar_t * szFn)
 {
 	if (showCuePoints)
 	{
@@ -965,7 +960,7 @@ void LoadCUE(wchar_t * szFn)
 	}
 }
 
-LPWSTR GetTooltipText(HWND hWnd, int pos, int lengthInMS)
+static LPWSTR GetTooltipText(HWND hWnd, int pos, int lengthInMS)
 {
 	static wchar_t coords[256] = { 0 };
 	RECT rc = { 0 };
@@ -1022,13 +1017,13 @@ LPWSTR GetTooltipText(HWND hWnd, int pos, int lengthInMS)
 	return coords;
 }
 
-int GetFileLengthMilliseconds(void)
+static int GetFileLengthMilliseconds(void)
 {
 	basicFileInfoStructW bfiW = { szFilename, 0, -1, NULL, 0 };
 	return (GetBasicFileInfo(&bfiW, TRUE, TRUE) ? (bfiW.length * 1000) : -1000);
 }
 
-BOOL AllowedFile(const wchar_t * szFn)
+static const bool AllowedFile(const wchar_t * szFn)
 {
 	LPCWSTR extension = FindPathExtension(szFn);
 	if (extension)
@@ -1049,7 +1044,7 @@ BOOL AllowedFile(const wchar_t * szFn)
 	return TRUE;
 }
 
-void RefreshInnerWindow(void)
+static void RefreshInnerWindow(void)
 {
 	// deal with no playback to
 	// ensure the window update
@@ -1059,8 +1054,8 @@ void RefreshInnerWindow(void)
 	}
 }
 
-const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
-							   const wchar_t *szArchiveFn, const bool only_check_exists)
+static const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
+									  const wchar_t *szArchiveFn, const bool only_check_exists)
 {
 	if (szFn && *szFn)
 	{
@@ -1243,7 +1238,7 @@ const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_playing,
 	return false;
 }
 
-void ProcessSkinChange(BOOL skip_refresh = FALSE)
+static void ProcessSkinChange(BOOL skip_refresh = FALSE)
 {
 	clrBackground = WADlg_getColor(WADLG_ITEMBG);
 	clrCuePoint = WADlg_getColor(WADLG_HILITE);
@@ -1330,7 +1325,7 @@ void ProcessSkinChange(BOOL skip_refresh = FALSE)
 	MLSkinnedWnd_SkinChanged(hWndToolTip, FALSE, FALSE);
 }
 
-void ClearCacheFolder(const bool mode)
+static void ClearCacheFolder(const bool mode)
 {
 	LPCWSTR folder = GetFilePaths();
 	for (int i = 0; i < 1 + !!mode; i++)
@@ -1339,7 +1334,7 @@ void ClearCacheFolder(const bool mode)
 	}
 }
 
-LPCWSTR GetSelectedFilePath(LPWSTR filepath, LPWSTR buffer, const size_t buffer_len)
+static LPCWSTR GetSelectedFilePath(LPWSTR filepath, LPWSTR buffer, const size_t buffer_len)
 {
 	// update as needed to match the new setting
 	// with fallback to the current playing if
@@ -1357,14 +1352,14 @@ LPCWSTR GetSelectedFilePath(LPWSTR filepath, LPWSTR buffer, const size_t buffer_
 	return GetPlaylistItemFile(index, filepath, buffer, buffer_len, NULL);
 }
 
-void CALLBACK ProcessFileTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
+static void CALLBACK ProcessFileTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
 {
 	KillTimer(hwnd, idEvent);
 
 	PostMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)2, delay_load);
 }
 
-void CALLBACK CreateTooltipTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
+static void CALLBACK CreateTooltipTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
 {
 	KillTimer(hwnd, idEvent);
 
@@ -1389,7 +1384,7 @@ void CALLBACK CreateTooltipTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWO
 	}
 }
 
-bool ProcessMenuResult(const UINT command, HWND parent)
+static const bool ProcessMenuResult(const UINT command, HWND parent)
 {
 	switch (command)
 	{
@@ -1618,7 +1613,7 @@ bool ProcessMenuResult(const UINT command, HWND parent)
 	return true;
 }
 
-void SetupConfigMenu(HMENU popup)
+static void SetupConfigMenu(HMENU popup)
 {
 	CheckMenuItem(popup, ID_CONTEXTMENU_CLICKTRACK, MF_BYCOMMAND | (clickTrack ? MF_CHECKED : MF_UNCHECKED));
 	CheckMenuItem(popup, ID_SUBMENU_CLEARWAVCACHEONEXIT, MF_BYCOMMAND | (clearOnExit ? MF_CHECKED : MF_UNCHECKED));
@@ -1658,7 +1653,7 @@ LRESULT CALLBACK EmdedWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 }
 #endif
 
-LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+static LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	// if you need to do other message handling then you can just place this first and
 	// process the messages you need to afterwards. note this is passing the frame and
@@ -2015,34 +2010,36 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 								LPPOINT points = (LPPOINT)SafeMalloc(4096 * sizeof(POINT));
 								if (points)
 								{
-								// draw a sine wave to indicate we're still
-								// there but that we've not got anything to
-								// show either from being missing / invalid
-								for (int k = 0; k < 2; k++)
-								{
-									const HDC thisdc = (!k ? cacheDC : hdcMem2);
-
-									SelectObject(thisdc, GetStockObject(DC_PEN));
-
-									// draw a base line in the middle of the window
-									SetDCPenColor(thisdc, (!nBufPos ? clrWaveformFailed : (!k ?
-															clrWaveform : clrWaveformPlayed)));
-									MoveToEx(thisdc, 0, height, NULL);
-
-									if (!k)
+									// draw a sine wave to indicate we're still
+									// there but that we've not got anything to
+									// show either from being missing / invalid
+									const float _h = (h / 2.0f);
+									for (int k = 0; k < 2; k++)
 									{
-										LineTo(thisdc, w, height);
+										const HDC thisdc = (!k ? cacheDC : hdcMem2);
+
+										SelectObject(thisdc, GetStockObject(DC_PEN));
+
+										// draw a base line in the middle of the window
+										SetDCPenColor(thisdc, (!nBufPos ? clrWaveformFailed : (!k ?
+																clrWaveform : clrWaveformPlayed)));
 										MoveToEx(thisdc, 0, height, NULL);
-									}
 
-									const bool playing = (k && (nBufPos > 0));
+										if (!k)
+										{
+											LineTo(thisdc, w, height);
+											MoveToEx(thisdc, 0, height, NULL);
+										}
 
-									for (int j = 0; j < ((w / 256) + 1); j++)
-									{
+										const bool playing = (k && (nBufPos > 0));
+
+										for (int j = 0; j < ((w / 256) + 1); j++)
+										{
+											const int _j = (j * 256);
 											for (int i = 0; i < 4096; i++)
 											{
-												points[i].x = (j * 256) + ((i * 256) / 4096);
-												points[i].y = (int)((h / 2.0f) * (1 - sin((4.0f * M_PI) * i / 4096)));
+												points[i].x = (_j + ((i * 256) / 4096));
+												points[i].y = (int)(_h * (1 - sinf((float)(4.0f * M_PI) * i / 4096)));
 											}
 
 											PolylineTo(thisdc, points, 4096);
@@ -2054,23 +2051,23 @@ LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 												FillRgn(thisdc, rgn, waveformPlayed);
 												DeleteObject(rgn);
 											}
+										}
+
+										// ensure the middle line will show in playing mode
+										if (playing)
+										{
+											SetDCPenColor(thisdc, clrWaveform);
+											MoveToEx(thisdc, 0, height, NULL);
+											LineTo(thisdc, w, height);
+										}
 									}
 
-									// ensure the middle line will show in playing mode
-									if (playing)
+									// only copy in things when its needed
+									if (nBufPos > 0)
 									{
-										SetDCPenColor(thisdc, clrWaveform);
-										MoveToEx(thisdc, 0, height, NULL);
-										LineTo(thisdc, w, height);
+										BitBlt(cacheDC, 0, 0, MulDiv(nSongPos, w,
+											   nSongLen), h, hdcMem2, 0, 0, SRCCOPY);
 									}
-								}
-
-								// only copy in things when its needed
-								if (nBufPos > 0)
-								{
-									BitBlt(cacheDC, 0, 0, MulDiv(nSongPos, w,
-										   nSongLen), h, hdcMem2, 0, 0, SRCCOPY);
-								}
 
 									SafeFree(points);
 								}
@@ -2531,7 +2528,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 													embed, hWnd, uMsg, wParam, lParam);
 }
 
-int PluginInit(void) 
+static int PluginInit(void)
 {
 #ifdef WACUP_BUILD
 	WASABI_API_SVC = plugin.service;
@@ -2597,7 +2594,7 @@ void PluginConfig()
 	DestroyMenu(hMenu);
 }
 
-void PluginQuit()
+static void PluginQuit()
 {
 	kill_threads = 2;
 
