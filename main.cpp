@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.27.6"
+#define PLUGIN_VERSION "3.28"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -1359,16 +1359,11 @@ static void CALLBACK ProcessFileTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent
 	PostMessage(plugin.hwndParent, WM_WA_IPC, (WPARAM)2, delay_load);
 }
 
-static void CALLBACK CreateTooltipTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
+static void tooltip_callback(HWND hwnd)
 {
-	KillTimer(hwnd, idEvent);
-
 	if (!IsWindow(hWndToolTip))
 	{
-		hWndToolTip = CreateWindowEx(WS_EX_NOPARENTNOTIFY | WS_EX_TOPMOST,
-									 TOOLTIPS_CLASS, NULL, TTS_NOPREFIX |
-									 TTS_ALWAYSTIP, 0, 0, 0, 0, hwnd,
-									 NULL, plugin.hDllInstance, NULL);
+		hWndToolTip = SetupWindowTooltip(hwnd, hWndToolTip, FALSE);
 	}
 
 	if (IsWindow(hWndToolTip))
@@ -1379,8 +1374,8 @@ static void CALLBACK CreateTooltipTimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEve
 		ti.hinst = plugin.hDllInstance;
 		PostMessage(hWndToolTip, TTM_ADDTOOL, NULL, (LPARAM)&ti);
 
-		SkinWindow(hWndToolTip, SKINNEDWND_TYPE_TOOLTIP,
-				   SWS_COMMON_STYLE | SWTTIP_NOZORDERFIX, 0);
+		SkinWindow(hWndToolTip, SKINNEDWND_TYPE_TOOLTIP, SWS_COMMON_STYLE |
+							  SWTTIP_NOZORDERFIX | SWTTIP_NOANIMATESET, 0);
 	}
 }
 
@@ -1530,7 +1525,7 @@ static const bool ProcessMenuResult(const UINT command, HWND parent)
 
 			if (!hideTooltip && IsWindow(hWndInner))
 			{
-				SetTimer(hWndInner, 8888, 333, CreateTooltipTimerProc);
+				CreateOrUpdateTooltip(hWndInner, tooltip_callback);
 			}
 			break;
 		}
@@ -1696,7 +1691,7 @@ static LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM
 		{
 			if (!hideTooltip)
 			{
-				SetTimer(hWnd, 8888, 333, CreateTooltipTimerProc);
+				CreateOrUpdateTooltip(hWndInner, tooltip_callback);
 			}
 
 			// if we've been created but processing is already
