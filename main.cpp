@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.28"
+#define PLUGIN_VERSION "3.28.2"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -1116,10 +1116,12 @@ static const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_play
 		nCueTracks = 0;
 
 		// make sure that it's valid and something we can process
+		// though we're not going to do the full check as that on
+		// the main ui thread can & will causing problems more so
+		// for files on a disconnected / slow network share *meh*
 		if ((!IsPathURL(usable_path) && !IsCDEntry(usable_path) &&
-			FilePathExists(usable_path, NULL) && AllowedFile(usable_path)) ||
-			IsYTUrl(usable_path) || (IsZipEntry(usable_path) &&
-			AllowedFile(usable_path)))
+			  AllowedFile(usable_path)) || IsYTUrl(usable_path) ||
+			(IsZipEntry(usable_path) && AllowedFile(usable_path)))
 		{
 			const bool zip_entry = (bIsCurrent && (IsZipEntry(usable_path) ||
 											  IsZipEntry(archive_override)));
@@ -1447,7 +1449,7 @@ static const bool ProcessMenuResult(const UINT command, HWND parent)
 					wchar_t cacheFile[48]/* = { 0 }*/;
 					if (GetFilenameHash(szFilename, szFilenameLen, cacheFile, L".cache"))
 					{
-						if (CheckForPath(filename, folder, cacheFile))
+						if (CheckPath(filename, folder, cacheFile))
 						{
 							RemoveFile(filename);
 						}
@@ -2324,7 +2326,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				/*if (!GetNativeIniInt(WINAMP_INI, INI_FILE_SECTION, L"Migrate", 0))
 				{
 					wchar_t szOldWaveCacheDir[MAX_PATH] = { 0 };
-					if (CheckForPath(szOldWaveCacheDir, szDLLPath, L"wavecache"))
+					if (CheckPath(szOldWaveCacheDir, szDLLPath, L"wavecache"))
 					{
 						wchar_t szFnFind[MAX_PATH] = { 0 };
 						CombinePath(szFnFind, szOldWaveCacheDir, L"*.cache");
@@ -2500,6 +2502,11 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				}
 				else
 				{
+					// using this to help force the shown
+					// contents to be redrawn properly as
+					// some selection changes didn't make
+					// the contents get redrawn correctly
+					lastWnd.bottom = 0;
 					RefreshInnerWindow();
 				}
 			}
