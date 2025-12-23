@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.28.2"
+#define PLUGIN_VERSION "3.28.3"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -122,10 +122,10 @@ wchar_t
 #ifndef _WIN64
 		szTempDLLDestination[MAX_PATH] = { 0 },
 #endif
-		szUnavailable[128] = { 0 },
-		szBadPlugin[128] = { 0 },
-		szStreamsNotSupported[128] = { 0 },
-		szLegacy[128] = { 0 };
+		*szUnavailable = NULL,
+		*szBadPlugin = NULL,
+		*szStreamsNotSupported = NULL,
+		*szLegacy = NULL;
 
 #ifndef _WIN64
 In_Module * pModule = NULL;
@@ -1984,6 +1984,26 @@ static LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM
 							SetBkColor(cacheDC, clrBackground);
 							SetTextColor(cacheDC, clrGeneratingText);
 
+							if (!szUnavailable)
+							{
+								szUnavailable = LngStringDup(IDS_WAVEFORM_UNAVAILABLE);
+							}
+
+							if (!szBadPlugin)
+							{
+								szBadPlugin = LngStringDup(IDS_WAVEFORM_UNAVAILABLE_BAD_PLUGIN);
+							}
+
+							if (!szStreamsNotSupported)
+							{
+								szStreamsNotSupported = LngStringDup(IDS_STREAMS_NOT_SUPPORTED);
+							}
+
+							if (!szLegacy)
+							{
+								szLegacy = LngStringDup(IDS_TRY_LEGACY_MODE);
+							}
+
 							DrawTextEx(cacheDC, (!IsPathURL(szFilename) && !IsZipEntry(szFilename) ?
 									   ((bUnsupported == 2) ? szBadPlugin : ((bUnsupported == 3) ?
 									   szLegacy : szUnavailable)) : szStreamsNotSupported), -1, &wnd,
@@ -2440,11 +2460,6 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 						}
 					}
 				}
-
-				LngStringCopy(IDS_WAVEFORM_UNAVAILABLE, szUnavailable, ARRAYSIZE(szUnavailable));
-				LngStringCopy(IDS_WAVEFORM_UNAVAILABLE_BAD_PLUGIN, szBadPlugin, ARRAYSIZE(szBadPlugin));
-				LngStringCopy(IDS_STREAMS_NOT_SUPPORTED, szStreamsNotSupported, ARRAYSIZE(szStreamsNotSupported));
-				LngStringCopy(IDS_TRY_LEGACY_MODE, szLegacy, ARRAYSIZE(szLegacy));
 
 				// Note: WASABI_API_APP->app_addAccelerators(..) requires Winamp 5.53 and higher
 				//       otherwise if you want to support older clients then you could use the
