@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.28.3"
+#define PLUGIN_VERSION "3.28.4"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -186,7 +186,7 @@ static int GetFileInfo(const bool unicode, char* szFn, char szFile[MAX_PATH])
 	int lengthInMS = -1;
 	if (!unicode)
 	{
-		ConvertPathToA(szFilename, szFile, MAX_PATH, CP_ACP);
+		ConvertUnicodeFn(szFile, MAX_PATH, szFilename, CP_ACP);
 	}
 
 	pModule->GetFileInfo((unicode ? (char*)szFn : szFile), (char*)szTitle, &lengthInMS);
@@ -276,14 +276,16 @@ static DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	bool reentrant = false;
 	wchar_t buf[16]/* = { 0 }*/;
 	extendedFileInfoStructW efis = { item->filename, (audioOnly ? L"type" :
-										  L"length"), buf, ARRAYSIZE(buf) };
+										 L"length"), buf, ARRAYSIZE(buf) };
 
 	// if enabled then only process audio only files
 	// as processing video can cause some problems...
 	if (!kill_threads && audioOnly)
 	{
-		if (GetFileInfoHookable((WPARAM)&efis, TRUE, &token, &reentrant,
-								NULL, &item->db_error) && !!WStr2I(buf))
+		buf[0] = 0;
+
+		if (GetFileInfoHookable((WPARAM)&efis, TRUE, &token, &reentrant, NULL,
+								  &item->db_error) && buf[0] && !!WStr2I(buf))
 		{
 			plugin.metadata->FreeExtendedFileInfoToken(&token);
 			goto abort;
@@ -301,6 +303,8 @@ static DWORD WINAPI CalcWaveformThread(LPVOID lp)
 	// as something to work with to check it's ok.
 	if (!kill_threads)
 	{
+		buf[0] = 0;
+
 		if (GetFileInfoHookable((WPARAM)&efis, TRUE, &token, &reentrant,
 									   NULL, &item->db_error) && buf[0])
 		{
@@ -576,8 +580,8 @@ static HANDLE StartProcessingFile(const wchar_t *szFn, const size_t szFnLen, con
 		HMODULE hDLL = NULL;
 		// we use Winamp's own checking to more reliably ensure that we'll
 		// get which plug-in is actually responsible for the file handling
-		In_Module *in_mod = InputPluginFindPlugin(szFn, 0)/*(In_Module*)SendMessage(plugin.hwndParent,
-															WM_WA_IPC, (WPARAM)szFn, IPC_CANPLAY)/**/;
+		In_Module *in_mod = InputPluginFindPlugin(szFn, 0, NULL, 0)/*(In_Module*)SendMessage(plugin.hwndParent,
+																	 WM_WA_IPC, (WPARAM)szFn, IPC_CANPLAY)/**/;
 		if (in_mod && (in_mod != (In_Module*)1))
 		{
 			wchar_t szSource[MAX_PATH]/* = { 0 }*/;
