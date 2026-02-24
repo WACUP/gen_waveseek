@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.28.4"
+#define PLUGIN_VERSION "3.28.6"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -2446,7 +2446,7 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 				wndclass = RegisterClassEx(&wcex);
 				if (wndclass)
 				{
-					hWndInner = CreateWindowEx(WS_EX_NOPARENTNOTIFY, (LPCTSTR)wndclass, 0, WS_CHILD |
+					hWndInner = CreateWindowEx(WS_EX_NOPARENTNOTIFY, MAKEINTATOM(wndclass), 0, WS_CHILD |
 											   WS_VISIBLE, 0, 0, 0, 0, hWndWaveseek, (HMENU)101,
 											   plugin.hDllInstance, (LPVOID)hWndWaveseek);
 
@@ -2457,23 +2457,14 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 						// as it can otherwise cause some occassional drawing issues/clashes.
 						//SetProp(hWndInner, L"SKPrefs_Ignore", (HANDLE)1);
 
-						HACCEL accel = LangAcceleratorTable(IDR_ACCELERATOR_WND);
-						if (accel)
-						{
-							AddAccelerators(hWndInner, &accel, 1, TRANSLATE_MODE_NORMAL);
-						}
+						AddAccelerators(WASABI_API_LNG_HINST, WASABI_API_ORIG_HINST,
+										IDR_ACCELERATOR_WND, hWndInner, NULL, 1,
+										TRANSLATE_MODE_NORMAL);
 					}
 				}
 
-				// Note: WASABI_API_APP->app_addAccelerators(..) requires Winamp 5.53 and higher
-				//       otherwise if you want to support older clients then you could use the
-				//       IPC_TRANSLATEACCELERATOR callback api which works for v5.0 upto v5.52
 				ACCEL accel = { FVIRTKEY | FALT, 'R', (WORD)WINAMP_WAVEFORM_SEEK_MENUID };
-				HACCEL hAccel = CreateAcceleratorTable(&accel, 1);
-				if (hAccel)
-				{
-					AddAccelerators(hWndInner, &hAccel, 1, TRANSLATE_MODE_GLOBAL);
-				}
+				AddAccelerators(NULL, NULL, 0, hWndInner, &accel, 1, TRANSLATE_MODE_GLOBAL);
 
 				// Winamp can report if it was started minimised which allows us to control our window
 				// to not properly show on startup otherwise the window will appear incorrectly when it
