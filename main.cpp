@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.28.6"
+#define PLUGIN_VERSION "3.28.7"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -1744,9 +1744,9 @@ static LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM
 				const int nSongPos = (bIsCurrent ? GetCurrentTrackPos() : 0),
 						  nSongLen = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() :
 														   GetFileLengthMilliseconds()),
-						  nBufPos = (nSongLen != -1 ? MulDiv(nSongPos, SAMPLE_BUFFER_SIZE, nSongLen) : 0),
-						  h = (wnd.bottom - wnd.top);
-				int w = (wnd.right - wnd.left);
+						  nBufPos = (nSongLen != -1 ? MulDiv(nSongPos, SAMPLE_BUFFER_SIZE, nSongLen) : 0);
+				int w = (wnd.right - wnd.left),
+					h = (wnd.bottom - wnd.top);
 
 				// it's a bit quicker to make use of a cached dc instead of making
 				// one for every paint event so we'll check if our cached dc is ok
@@ -1790,10 +1790,12 @@ static LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM
 				{
 					FillRectWithColour(cacheDC, &wnd, clrBackground, TRUE);
 
-					// make the width a bit less so the right-edge
-					// can allow for the end of the track to be
-					// correctly selected or the tooltip show up
-					--w;
+					// have the height be a bit less so the bottom-edge
+					// can be drawn correctly vs how the polyline works
+					if (lines)
+					{
+						--h;
+					}
 
 					const int height = (h / 2);
 					if ((bIsLoaded || bIsProcessing) && !bUnsupported)
