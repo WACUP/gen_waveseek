@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.28.7"
+#define PLUGIN_VERSION "3.28.9"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -1744,7 +1744,7 @@ static LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM
 				const int nSongPos = (bIsCurrent ? GetCurrentTrackPos() : 0),
 						  nSongLen = (bIsCurrent ? GetCurrentTrackLengthMilliSeconds() :
 														   GetFileLengthMilliseconds()),
-						  nBufPos = (nSongLen != -1 ? MulDiv(nSongPos, SAMPLE_BUFFER_SIZE, nSongLen) : 0);
+						  nBufPos = ((nSongLen > 0) ? MulDiv(nSongPos, SAMPLE_BUFFER_SIZE, nSongLen) : 0);
 				int w = (wnd.right - wnd.left),
 					h = (wnd.bottom - wnd.top);
 
@@ -1792,13 +1792,15 @@ static LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM
 
 					// have the height be a bit less so the bottom-edge
 					// can be drawn correctly vs how the polyline works
-					if (lines)
+					// but only for the render & not with the fallback!
+					const bool available = ((bIsLoaded || bIsProcessing) && !bUnsupported);
+					if (lines && available)
 					{
 						--h;
 					}
 
 					const int height = (h / 2);
-					if ((bIsLoaded || bIsProcessing) && !bUnsupported)
+					if (available)
 					{
 						SelectObject(cacheDC, GetStockObject(DC_PEN));
 
