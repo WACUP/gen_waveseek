@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.28.9"
+#define PLUGIN_VERSION "3.28.10"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -351,7 +351,7 @@ static DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		const uint64_t nExpectedTotalSampleCount = (nFramePerWindow * SAMPLE_BUFFER_SIZE
 													* 1ULL * item->parameters.channels);
 		const int padded_bits = (((item->parameters.bitsPerSample + 7) & (~7)) / 8);
-		const size_t buffer_size = (const size_t)(1152 * item->parameters.channels * padded_bits);
+		const size_t buffer_size = (const size_t)(2304 * item->parameters.channels * padded_bits);
 		char* data = (char*)SafeMalloc(buffer_size * 2);	// *2 deals with bad calls
 		if (!data)
 		{
@@ -428,7 +428,10 @@ static DWORD WINAPI CalcWaveformThread(LPVOID lp)
 			}
 		}
 
-		SafeFree(data);
+		if (kill_threads != 2)
+		{
+			SafeFree(data);
+		}
 
 		if (WASABI_API_DECODEFILE2)
 		{
@@ -2057,7 +2060,6 @@ static LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM
 										}
 
 										const bool playing = (k && (nBufPos > 0));
-
 										for (int j = 0; j < ((w / 256) + 1); j++)
 										{
 											const int _j = (j * 256);
