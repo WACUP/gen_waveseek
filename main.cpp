@@ -351,8 +351,8 @@ static DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		const uint64_t nExpectedTotalSampleCount = (nFramePerWindow * SAMPLE_BUFFER_SIZE
 													* 1ULL * item->parameters.channels);
 		const int padded_bits = (((item->parameters.bitsPerSample + 7) & (~7)) / 8);
-		const size_t buffer_size = (const size_t)(2304 * item->parameters.channels * padded_bits);
-		char* data = (char*)SafeMalloc(buffer_size * 2);	// *2 deals with bad calls
+		const size_t buffer_size = (USHRT_MAX * 4);	// just go with the most we might get
+		char* data = (char*)SafeMalloc(buffer_size);
 		if (!data)
 		{
 			goto abort;
