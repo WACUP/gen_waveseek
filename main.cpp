@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.28.10"
+#define PLUGIN_VERSION "3.29.2"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -566,7 +566,7 @@ static HANDLE StartProcessingFile(const wchar_t *szFn, const size_t szFnLen, con
 			item->parameters.channels = 2;
 			item->parameters.bitsPerSample = 24;
 			item->parameters.sampleRate = 44100;
-			item->filename = SafeWideDupN(szFn, szFnLen);
+			item->filename = ((!szArchiveFn || !*szArchiveFn) ? SafeWideDupN(szFn, szFnLen) : SafeWideDup(szArchiveFn));
 
 			const HANDLE CalcThread = StartThread(CalcWaveformThread, item, (!lowerpriority ? THREAD_PRIORITY_HIGHEST :
 															 THREAD_PRIORITY_LOWEST), 0, calc_thread_started_callback);
@@ -1126,13 +1126,19 @@ static const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_play
 		// though we're not going to do the full check as that on
 		// the main ui thread can & will causing problems more so
 		// for files on a disconnected / slow network share *meh*
-		if ((!IsPathURL(usable_path) && !IsCDEntry(usable_path) &&
-			  AllowedFile(usable_path)) || IsYTUrl(usable_path) ||
+		bool is_yt_url = false;
+		if ((!IsPathURL(usable_path) && !IsCDEntry(usable_path) && AllowedFile(usable_path)) ||
+			(is_yt_url = IsYTUrl(usable_path, archive_override, false)) ||
 			(IsZipEntry(usable_path) && AllowedFile(usable_path)))
 		{
 			const bool zip_entry = (bIsCurrent && (IsZipEntry(usable_path) ||
 											  IsZipEntry(archive_override)));
 			LoadCUE(usable_path);
+
+			if (is_yt_url)
+			{
+				szFilenameLen = CopyCchStrEx(szFilename, ARRAYSIZE(szFilename), archive_override);
+			}
 
 #ifdef WACUP_BUILD
 			// for a smoother upgrade we'll still look
@@ -1146,9 +1152,9 @@ static const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_play
 			if (!FileExists(szWaveCacheFile))
 			{
 				wchar_t cacheFile[48]/* = { 0 }*/;
-				if (GetFilenameHash((zip_entry && archive_override[0] ? archive_override : usable_path),
-									(zip_entry && archive_override[0] ? wcslen(archive_override ):
-									szFilenameLen), cacheFile, L".cache"))
+				if (GetFilenameHash(((zip_entry || is_yt_url) && archive_override[0] ? archive_override :
+									usable_path), ((zip_entry || is_yt_url) && archive_override[0] ?
+									wcslen(archive_override ): szFilenameLen), cacheFile, L".cache"))
 				{
 					CombinePath(szWaveCacheFile, folder, cacheFile);
 				}
@@ -1174,8 +1180,8 @@ static const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_play
 					// found it so no need to re-add
 					// as that's just going to cause
 					// more processing / duplication
-					if (wcsistr((zip_entry && archive && archive_override[0] ?
-						archive_override : usable_path), (*itr).first.c_str()))
+					if (wcsistr(((zip_entry || is_yt_url) && archive && archive_override[0] ?
+									  archive_override : usable_path), (*itr).first.c_str()))
 					{
 						LeaveCriticalSection(&processing_cs);
 
@@ -1198,8 +1204,8 @@ static const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_play
 				const bool can_process = (count < cpu_count);
 				if (can_process)
 				{
-					const HANDLE thread = StartProcessingFile(usable_path, usable_len,
-												szArchiveFn, start_playing, db_error);
+					const HANDLE thread = StartProcessingFile(usable_path, usable_len, (is_yt_url ?
+										 archive_override : szArchiveFn), start_playing, db_error);
 					if (thread != NULL)
 					{
 						processing_list[std::wstring(usable_path, usable_len)] = thread;

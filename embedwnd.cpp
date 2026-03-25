@@ -61,7 +61,7 @@ HWND CreateEmbeddedWindow(embedWindowState* embedWindow, const GUID
 	embedWindow->flags |= EMBED_FLAGS_NOWINDOWMENU;
 
 	// now we have set up the embedWindowState structure, we pass it to Winamp to create
-	return plugin.createembed(embedWindow, embedWindowTitle);
+	return plugin.createembed(embedWindow, embedWindowTitle CREATE_EMBED_WITH_TITLE_PARAMS);
 }
 
 void DestroyEmbeddedWindow(embedWindowState* embedWindow)
