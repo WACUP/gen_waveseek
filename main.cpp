@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.29.2"
+#define PLUGIN_VERSION "3.29.3"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -1610,7 +1610,8 @@ static const bool ProcessMenuResult(const UINT command, HWND parent)
 		case ID_SUBMENU_ABOUT:
 		{
 			wchar_t message[512]/* = { 0 }*/;
-			PrintfCch(message, ARRAYSIZE(message), LangString(IDS_ABOUT_STRING), TEXT(__DATE__));
+			PrintfCch(message, ARRAYSIZE(message), LangString(IDS_ABOUT_STRING),
+							 WACUP_Author(), WACUP_Copyright(), TEXT(__DATE__));
 			//MessageBox(plugin.hwndParent, message, pluginTitleW, 0);
 			AboutMessageBox(plugin.hwndParent, message, (LPWSTR)plugin.description);
 			break;
