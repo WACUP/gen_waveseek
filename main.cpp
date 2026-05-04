@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.29.3"
+#define PLUGIN_VERSION "3.29.4"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -80,7 +80,8 @@ int clickTrack = 0, showCuePoints = 0,
 	kill_threads = 0, lowerpriority = 0, clearOnExit = 0;
 UINT WINAMP_WAVEFORM_SEEK_MENUID = 0xa1bb;
 UINT_PTR timer_id = 0;
-LPPOINT wave_remaining_points = NULL, wave_points = NULL;
+LPPOINT wave_remaining_points = NULL, wave_points = NULL,
+		wave_unknown_points = NULL;
 
 api_service *WASABI_API_SVC = NULL;
 api_decodefile2 *WASABI_API_DECODEFILE2 = NULL;
@@ -2042,8 +2043,12 @@ static LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM
 
 								FillRectWithColour(hdcMem2, &wnd, clrBackground, TRUE);
 
-								LPPOINT points = (LPPOINT)SafeMalloc(4096 * sizeof(POINT));
-								if (points)
+								if (!wave_unknown_points)
+								{
+									wave_unknown_points = (LPPOINT)SafeMalloc(4096 * sizeof(POINT));
+								}
+
+								if (wave_unknown_points)
 								{
 									// draw a sine wave to indicate we're still
 									// there but that we've not got anything to
@@ -2072,14 +2077,14 @@ static LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM
 											const int _j = (j * 256);
 											for (int i = 0; i < 4096; i++)
 											{
-												points[i].x = (_j + ((i * 256) / 4096));
-												points[i].y = (int)(_h * (1 - sinf((float)(4.0f * M_PI) * i / 4096)));
+												wave_unknown_points[i].x = (_j + ((i * 256) / 4096));
+												wave_unknown_points[i].y = (int)(_h * (1 - sinf((float)(4.0f * M_PI) * i / 4096)));
 											}
 
-											PolylineTo(thisdc, points, 4096);
+											PolylineTo(thisdc, wave_unknown_points, 4096);
 
 											// only fill in things when its needed
-											const HRGN rgn = (playing ? CreatePolygonRgn(points, 4096, ALTERNATE) : NULL);
+											const HRGN rgn = (playing ? CreatePolygonRgn(wave_unknown_points, 4096, ALTERNATE) : NULL);
 											if (rgn)
 											{
 												FillRgn(thisdc, rgn, waveformPlayed);
@@ -2102,8 +2107,6 @@ static LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM
 										BitBlt(cacheDC, 0, 0, MulDiv(nSongPos, w,
 											   nSongLen), h, hdcMem2, 0, 0, SRCCOPY);
 									}
-
-									SafeFree(points);
 								}
 
 								SelectObject(hdcMem2, hbmOld2);
@@ -2307,6 +2310,12 @@ static LRESULT CALLBACK InnerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM
 			{
 				DestroyWindow(hWndToolTip);
 				hWndToolTip = NULL;
+			}
+
+			if (wave_unknown_points != NULL)
+			{
+				SafeFree(wave_unknown_points);
+				wave_unknown_points = NULL;
 			}
 
 			//if (WASABI_API_APP != NULL)
