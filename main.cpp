@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.29.4"
+#define PLUGIN_VERSION "3.29.6"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -36,6 +36,7 @@
 #include <loader/loader/ini.h>
 #include <loader/loader/runtime_helper.h>
 #include <loader/hook/plugins.h>
+#include <loader/hook/lock.h>
 #include <nu/ServiceBuilder.h>
 #endif
 
@@ -236,7 +237,7 @@ static void ClearProcessingHandles(void)
 {
 	ProcessStop((kill_threads == 2));
 
-	EnterCriticalSection(&processing_cs);
+	const LockGuard lock(processing_cs);
 
 	std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
 	while (itr != processing_list.end())
@@ -248,8 +249,6 @@ static void ClearProcessingHandles(void)
 
 	// make sure we're good
 	processing_list.clear();
-
-	LeaveCriticalSection(&processing_cs);
 }
 
 typedef struct
@@ -314,7 +313,7 @@ static DWORD WINAPI CalcWaveformThread(LPVOID lp)
 		else
 		{
 			basicFileInfoStructW bfiW = { item->filename, 0, -1, NULL, 0 };
-			if (GetBasicFileInfo(&bfiW, TRUE, TRUE))
+			if (GetBasicFileInfo(&bfiW, TRUE, TRUE, -1))
 			{
 				lengthMS = (bfiW.length * 1000);
 			}
@@ -464,7 +463,7 @@ static DWORD WINAPI CalcWaveformThread(LPVOID lp)
 abort:
 	if (!kill_threads)
 	{
-		EnterCriticalSection(&processing_cs);
+		LockGuard lock(processing_cs);
 
 		std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
 		while (itr != processing_list.end())
@@ -485,7 +484,7 @@ abort:
 
 		const bool is_empty = processing_list.empty();
 
-		LeaveCriticalSection(&processing_cs);
+		lock.Release();
 
 		if (is_empty)
 		{
@@ -595,7 +594,7 @@ static HANDLE StartProcessingFile(const wchar_t *szFn, const size_t szFnLen, con
 
 			// we got a valid In_Module * so make a temp copy
 			// which we'll then be calling for the processing
-			wchar_t *filename = FindPathFileName(szSource);
+			wchar_t *filename = FindPathFileName(szSource, nullptr);
 			if (!filename || !*filename)
 			{
 				bUnsupported = 2;
@@ -1028,7 +1027,7 @@ static LPWSTR GetTooltipText(HWND hWnd, int pos, int lengthInMS)
 static int GetFileLengthMilliseconds(void)
 {
 	basicFileInfoStructW bfiW = { szFilename, 0, -1, NULL, 0 };
-	return (GetBasicFileInfo(&bfiW, TRUE, TRUE) ? (bfiW.length * 1000) : -1000);
+	return (GetBasicFileInfo(&bfiW, TRUE, TRUE, -1) ? (bfiW.length * 1000) : -1000);
 }
 
 static const bool AllowedFile(const wchar_t * szFn)
@@ -1039,12 +1038,12 @@ static const bool AllowedFile(const wchar_t * szFn)
 		// for extensions that we know are going to trigger plug-ins that are
 		// known to not be thread safe then we'll crudely add them here so as
 		// avoid processing until (hopefully) those plug-ins can be improved!
-		if (SameStr(extension, L"2sf") || SameStr(extension, L"mini2sf") ||
-			SameStr(extension, L"gsf") || SameStr(extension, L"minigsf") ||
-			SameStr(extension, L"ncsf") || SameStr(extension, L"minincsf") ||
-			SameStr(extension, L"qsf") || SameStr(extension, L"minisqsf") ||
-			SameStr(extension, L"snsf") || SameStr(extension, L"minisnsf") ||
-			SameStr(extension, L"spc") || plugin.albumart->CanLoad(szFn))
+		if (!FastCompare(extension, L"2sf") || !FastCompare(extension, L"mini2sf") ||
+			!FastCompare(extension, L"gsf") || !FastCompare(extension, L"minigsf") ||
+			!FastCompare(extension, L"ncsf") || !FastCompare(extension, L"minincsf") ||
+			!FastCompare(extension, L"qsf") || !FastCompare(extension, L"minisqsf") ||
+			!FastCompare(extension, L"snsf") || !FastCompare(extension, L"minisnsf") ||
+			!FastCompare(extension, L"spc") || plugin.albumart->CanLoad(szFn))
 		{
 			return FALSE;
 		}
@@ -1146,8 +1145,9 @@ static const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_play
 			// for the original cache file but a newer
 			// file will be made with the better name.
 			LPCWSTR folder = GetFilePaths();
-			CombinePath(szWaveCacheFile, folder, FindPathFileName((zip_entry &&
-						archive_override[0] ? archive_override : usable_path)));
+			CombinePath(szWaveCacheFile, folder, FindPathFileName(
+						(zip_entry && archive_override[0] ?
+						archive_override : usable_path), nullptr));
 			CatCchStr(szWaveCacheFile, ARRAYSIZE(szWaveCacheFile), L".cache");
 
 			if (!FileExists(szWaveCacheFile))
@@ -1173,7 +1173,7 @@ static const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_play
 					return false;
 				}
 
-				EnterCriticalSection(&processing_cs);
+				LockGuard lock(processing_cs);
 
 				std::map<std::wstring, HANDLE>::const_iterator itr = processing_list.begin();
 				while (itr != processing_list.end())
@@ -1184,7 +1184,7 @@ static const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_play
 					if (wcsistr(((zip_entry || is_yt_url) && archive && archive_override[0] ?
 									  archive_override : usable_path), (*itr).first.c_str()))
 					{
-						LeaveCriticalSection(&processing_cs);
+						lock.Release();
 
 						start_live_timer();
 
@@ -1213,7 +1213,7 @@ static const bool ProcessFilePlayback(const wchar_t *szFn, const bool start_play
 					}
 				}
 
-				LeaveCriticalSection(&processing_cs);
+				lock.Release();
 				
 				start_live_timer();
 			}
@@ -1443,7 +1443,7 @@ static const bool ProcessMenuResult(const UINT command, HWND parent)
 			// support the older & newer cache filenames
 			wchar_t filename[MAX_PATH]/* = { 0 }*/;
 			LPCWSTR folder = GetFilePaths();
-			CombinePath(filename, folder, FindPathFileName(szFilename));
+			CombinePath(filename, folder, FindPathFileName(szFilename, nullptr));
 			CatCchStr(filename, ARRAYSIZE(filename), L".cache");
 
 			if (FileExists(filename))
@@ -1479,7 +1479,7 @@ static const bool ProcessMenuResult(const UINT command, HWND parent)
 
 			ProcessStop();
 
-			EnterCriticalSection(&processing_cs);
+			LockGuard lock(processing_cs);
 
 			std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
 			while (itr != processing_list.end())
@@ -1500,7 +1500,7 @@ static const bool ProcessMenuResult(const UINT command, HWND parent)
 
 			processing_list.clear();
 
-			LeaveCriticalSection(&processing_cs);
+			lock.Release();
 
 			// wait a moment so if it was already
 			// processing then that can clean-up
@@ -1566,7 +1566,7 @@ static const bool ProcessMenuResult(const UINT command, HWND parent)
 			SaveNativeIniString(WINAMP_INI, L"Waveseek", L"lowerpriority",
 										   (lowerpriority ? L"1" : NULL));
 
-			EnterCriticalSection(&processing_cs);
+			const LockGuard lock(processing_cs);
 
 			// update the threads that are already running
 			std::map<std::wstring, HANDLE>::iterator itr = processing_list.begin();
@@ -1580,8 +1580,6 @@ static const bool ProcessMenuResult(const UINT command, HWND parent)
 					ResumeThread(handle);
 				}
 			}
-
-			LeaveCriticalSection(&processing_cs);
 			break;
 		}
 #ifndef _WIN64
