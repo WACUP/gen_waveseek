@@ -562,7 +562,8 @@ static HANDLE StartProcessingFile(const wchar_t *szFn, const size_t szFnLen, con
 		if (item)
 		{
 			item->db_error = db_error;
-			item->parameters.flags = AUDIOPARAMETERS_MAXCHANNELS | AUDIOPARAMETERS_MAXSAMPLERATE | AUDIOPARAMETERS_NO_RESAMPLE;
+			item->parameters.flags = AUDIOPARAMETERS_MAXCHANNELS | AUDIOPARAMETERS_MAXSAMPLERATE |
+									 AUDIOPARAMETERS_NO_RESAMPLE | AUDIOPARAMETERS_FOR_UI_USAGE;
 			item->parameters.channels = 2;
 			item->parameters.bitsPerSample = 24;
 			item->parameters.sampleRate = 44100;
