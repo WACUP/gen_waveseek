@@ -1,4 +1,4 @@
-#define PLUGIN_VERSION "3.29.6"
+#define PLUGIN_VERSION "3.29.7"
 
 #define WACUP_BUILD
 //#define USE_GDIPLUS
@@ -2528,6 +2528,15 @@ void __cdecl MessageProc(HWND hWnd, const UINT uMsg, const WPARAM wParam, const 
 					}
 					else
 					{
+						// using this to help force the shown
+						// contents to be reflect there's not
+						// a playlist present to render from.
+						if (!GetPlaylistLength())
+						{
+							bIsCurrent = bIsProcessing = bIsLoaded = false;
+							szFilename[0] = szWaveCacheFile[0] = 0;
+							lastWnd.bottom = 0;
+						}
 						RefreshInnerWindow();
 					}
 				}
