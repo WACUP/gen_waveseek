@@ -22,9 +22,13 @@ unsigned long nCurrentAmplitude = 0,
 			  nCurrentSampleCount = 0;
 extern int nLengthInMS;
 
-int DummyOutOpen(const int samplerate, const int numchannels, const int bitspersamp,
-							   const int /*bufferlenms*/, const int /*prebufferms*/)
+int DummyOutOpen(OUT_OPEN_PARAM)
 {
+#ifndef _WIN64
+	(void)bufferlenms;
+	(void)prebufferms;
+#endif
+
 	nNumChannels = numchannels;
 	nBitsPerSample = bitspersamp;
 	nCurrentSampleCount = nCurrentAmplitude = 0;
